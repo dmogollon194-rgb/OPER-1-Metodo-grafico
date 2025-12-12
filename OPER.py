@@ -176,7 +176,7 @@ if vista == "Modelo":
         col_a, col_b, col_sent, col_rhs = st.columns(4)
 
         with col_a:
-            a = st.number_input(f"a{k+1}", value=1.0, key=f"a{k}")
+            a = st.number_input(f"Coeficiente de X{k+1}", value=1.0, key=f"a{k}")
 
         with col_b:
             b = st.number_input(f"b{k+1}", value=1.0, key=f"b{k}")
