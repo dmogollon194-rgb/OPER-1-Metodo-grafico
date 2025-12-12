@@ -61,7 +61,12 @@ tab_modelo, tab_grafica = st.tabs(["Modelo", "Gráfica"])
 
 # -------- TAB MODELO --------
 with tab_modelo:
-    st.header("Definición del modelo")
+    # Título grande y centrado
+    st.markdown(
+        "<h2 style='text-align:center; margin-top:0;'>Definición del modelo</h2>",
+        unsafe_allow_html=True
+    )
+    st.markdown("---")
 
     # Tipo de problema
     tipo_problema = st.selectbox("Tipo de problema", ["Minimizar", "Maximizar"])
@@ -79,9 +84,7 @@ with tab_modelo:
         sentido_tex = r"\min" if tipo_problema == "Minimizar" else r"\max"
         sign_c2 = "+" if c2 >= 0 else "-"
         abs_c2 = abs(c2)
-        st.latex(
-            rf"{sentido_tex}\ Z = {c1}x {sign_c2} {abs_c2}y"
-        )
+        st.latex(rf"{sentido_tex}\ Z = {c1}x {sign_c2} {abs_c2}y")
 
     st.markdown("---")
 
@@ -97,38 +100,45 @@ with tab_modelo:
 
     restricciones = []
     for k in range(n_restr):
-        st.markdown(f"**Restricción {k+1}**")
-        col_inputs, col_latex = st.columns([2, 3])
+        # Título de la restricción y línea separadora
+        st.markdown("---")
+        st.markdown(
+            f"<h4 style='margin-bottom:0;'>Restricción {k+1}</h4>",
+            unsafe_allow_html=True
+        )
 
-        with col_inputs:
+        # Una sola fila con todos los inputs
+        col_a, col_b, col_sent, col_rhs = st.columns([1, 1, 1, 1])
+
+        with col_a:
             a = st.number_input(
-                f"a{k+1} (coeficiente de x)",
+                f"a{k+1} (coef. x)",
                 value=1.0,
                 key=f"a_{k}",
             )
+        with col_b:
             b = st.number_input(
-                f"b{k+1} (coeficiente de y)",
+                f"b{k+1} (coef. y)",
                 value=1.0,
                 key=f"b_{k}",
             )
+        with col_sent:
             sentido = st.selectbox(
                 f"Tipo {k+1}",
                 ["<=", ">=", "="],
                 key=f"sentido_{k}",
             )
+        with col_rhs:
             rhs = st.number_input(
                 f"Lado derecho {k+1}",
                 value=8.0,
                 key=f"rhs_{k}",
             )
 
-        with col_latex:
-            sign_b = "+" if b >= 0 else "-"
-            abs_b = abs(b)
-            # Ej: 2x + 3y <= 8
-            st.latex(
-                rf"{a}x {sign_b} {abs_b}y \; {sentido} \; {rhs}"
-            )
+        # Ecuación en LaTeX debajo de la fila de inputs
+        sign_b = "+" if b >= 0 else "-"
+        abs_b = abs(b)
+        st.latex(rf"{a}x {sign_b} {abs_b}y \; {sentido} \; {rhs}")
 
         restricciones.append((a, b, sentido, rhs))
 
@@ -154,7 +164,7 @@ with tab_modelo:
             st.write(f"y* = {y_opt:.4f}")
             st.write(f"Z* = {z_opt:.4f}")
 
-            # Guardar en session_state para usar en la pestaña de gráfica
+            # Guardar en session_state para la pestaña Gráfica
             st.session_state["modelo_resuelto"] = True
             st.session_state["x_opt"] = x_opt
             st.session_state["y_opt"] = y_opt
@@ -169,7 +179,11 @@ with tab_modelo:
 
 # -------- TAB GRÁFICA --------
 with tab_grafica:
-    st.header("Gráfica de la región factible")
+    st.markdown(
+        "<h2 style='text-align:center; margin-top:0;'>Gráfica de la región factible</h2>",
+        unsafe_allow_html=True
+    )
+    st.markdown("---")
 
     if "modelo_resuelto" not in st.session_state or not st.session_state["modelo_resuelto"]:
         st.info("Primero define el modelo y pulsa **Resolver modelo** en la pestaña *Modelo*.")
@@ -241,4 +255,3 @@ with tab_grafica:
         ax.legend(loc="upper right", fontsize=7)
 
         st.pyplot(fig)
-
