@@ -178,8 +178,10 @@ if vista == "Modelo":
 
         restricciones.append((a, b, sentido, rhs))
 
-    # BOTÓN RESOLVER
-    if st.button("Resolver modelo"):
+    # =================== BOTÓN RESOLVER (solo calcula y guarda) ===================
+    boton_resolver = st.button("Resolver modelo")
+
+    if boton_resolver:
         try:
             modelo, resultado = construir_y_resolver_modelo(
                 c1, c2, restricciones, tipo_problema, tipo_x, tipo_y
@@ -188,20 +190,10 @@ if vista == "Modelo":
             x_opt = pyo.value(modelo.x)
             y_opt = pyo.value(modelo.y)
             z_opt = pyo.value(modelo.obj)
-
-            st.subheader("Resultado del solver")
-            st.write(str(resultado.solver.termination_condition))
-
-            st.subheader("Solución óptima")
-            st.write(f"x* = {x_opt:.4f}")
-            st.write(f"y* = {y_opt:.4f}")
-            st.write(f"Z* = {z_opt:.4f}")
+            status = str(resultado.solver.termination_condition)
 
             # ==== PRECIOS SOMBRA ====
-            st.subheader("Precios sombra (valores duales)")
             duales = []
-
-            # Dual solo tiene sentido con modelo lineal continuo
             dualDisponible = (tipo_x == "Real ≥ 0" and tipo_y == "Real ≥ 0")
 
             if dualDisponible:
@@ -210,22 +202,37 @@ if vista == "Modelo":
                     duales.append([f"Restricción {i}", dual_val])
             else:
                 for i in range(len(restricciones)):
-                    duales.append([f"Restricción {i+1}",
-                                   "No disponible (modelo entero/binario)"])
+                    duales.append(
+                        [f"Restricción {i+1}",
+                         "No disponible (modelo entero/binario)"]
+                    )
 
-            st.table(duales)
-
-            # Guardar todo
+            # Guardar todo en session_state
             st.session_state["modelo_resuelto"] = True
+            st.session_state["solver_status"] = status
             st.session_state["x_opt"] = x_opt
             st.session_state["y_opt"] = y_opt
             st.session_state["z_opt"] = z_opt
             st.session_state["restricciones"] = restricciones
             st.session_state["c1"] = c1
             st.session_state["c2"] = c2
+            st.session_state["duales"] = duales
 
         except Exception as e:
             st.error(f"Error: {e}")
+
+    # =================== MOSTRAR RESULTADOS SI YA HAY SOLUCIÓN ===================
+    if st.session_state.get("modelo_resuelto", False):
+        st.subheader("Resultado del solver")
+        st.write(st.session_state.get("solver_status", ""))
+
+        st.subheader("Solución óptima")
+        st.write(f"x* = {st.session_state['x_opt']:.4f}")
+        st.write(f"y* = {st.session_state['y_opt']:.4f}")
+        st.write(f"Z* = {st.session_state['z_opt']:.4f}")
+
+        st.subheader("Precios sombra (valores duales)")
+        st.table(st.session_state.get("duales", []))
 
 
 # =================== VISTA GRÁFICA ===================
@@ -234,7 +241,7 @@ if vista == "Gráfica":
     st.markdown("<h2>Gráfica de la región factible</h2>", unsafe_allow_html=True)
     st.markdown("<hr>", unsafe_allow_html=True)
 
-    if "modelo_resuelto" not in st.session_state:
+    if not st.session_state.get("modelo_resuelto", False):
         st.info("Primero define y resuelve el modelo en la vista 'Modelo'.")
     else:
         import plotly.graph_objects as go
@@ -265,7 +272,7 @@ if vista == "Gráfica":
 
         fig = go.Figure()
 
-        # Región factible (como antes)
+        # Región factible
         fig.add_trace(go.Contour(
             x=X,
             y=Y,
@@ -276,7 +283,7 @@ if vista == "Gráfica":
             name="Región factible"
         ))
 
-        # Líneas de restricciones
+        # Líneas de las restricciones
         for (a, b, s, rhs) in restricciones:
             if abs(b) > 1e-8:
                 y_line = (rhs - a * X) / b
@@ -319,7 +326,7 @@ if vista == "Gráfica":
                 name="FO en Z*"
             ))
 
-        # Zoom automático sobre región factible (como antes)
+        # Zoom automático sobre región factible
         xs = XX[factible]
         ys = YY[factible]
         if xs.size > 0:
