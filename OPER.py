@@ -25,66 +25,49 @@ st.markdown(watermark, unsafe_allow_html=True)
 # =================== CSS ESTÉTICO GLOBAL ===================
 css = """
 <style>
-
-/* ======== Sidebar ======== */
 section[data-testid="stSidebar"] {
     width: 320px !important;
     font-size: 18px !important;
     padding: 20px !important;
 }
-
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3 {
     font-size: 28px !important;
     font-weight: 900 !important;
 }
-
 section[data-testid="stSidebar"] label {
     font-size: 18px !important;
 }
-
-/* ======== Área principal ======== */
 .main-container {
     max-width: 1100px;
     margin-left: auto;
     margin-right: auto;
 }
-
-/* Títulos */
 h2 {
     font-size: 36px !important;
     text-align: center !important;
     font-weight: 900 !important;
 }
-
 h3, h4 {
     font-size: 26px !important;
     font-weight: 700 !important;
 }
-
-/* Inputs más grandes */
 div[data-baseweb="select"] > div {
     font-size: 18px !important;
 }
-
 input[type="number"] {
     font-size: 18px !important;
 }
-
-/* Separadores */
 hr {
     border: 0;
     border-top: 1px solid #444;
     margin: 25px 0;
 }
-
-/* Espaciado general */
 .block-container {
     padding-top: 1rem !important;
     padding-bottom: 3rem !important;
 }
-
 </style>
 """
 st.markdown(css, unsafe_allow_html=True)
@@ -107,6 +90,9 @@ def obtener_dominio(tipo):
 def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, tipo_y):
     m = pyo.ConcreteModel()
 
+    # Declarar dual
+    m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+
     m.x = pyo.Var(domain=obtener_dominio(tipo_x))
     m.y = pyo.Var(domain=obtener_dominio(tipo_y))
 
@@ -125,7 +111,8 @@ def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, ti
             m.cons.add(a * m.x + b * m.y == rhs)
 
     solver = pyo.SolverFactory("appsi_highs")
-    resultado = solver.solve(m)
+    resultado = solver.solve(m, load_solutions=True)
+
     return m, resultado
 
 
@@ -191,6 +178,7 @@ if vista == "Modelo":
 
         restricciones.append((a, b, sentido, rhs))
 
+    # BOTÓN RESOLVER
     if st.button("Resolver modelo"):
         try:
             modelo, resultado = construir_y_resolver_modelo(
@@ -209,6 +197,24 @@ if vista == "Modelo":
             st.write(f"y* = {y_opt:.4f}")
             st.write(f"Z* = {z_opt:.4f}")
 
+            # ==== PRECIOS SOMBRA ====
+            st.subheader("Precios sombra (valores duales)")
+            duales = []
+
+            # Si hay enteras, no existirán duales
+            dualDisponible = (tipo_x == "Real ≥ 0" and tipo_y == "Real ≥ 0")
+
+            if dualDisponible:
+                for i, cons in enumerate(modelo.cons.values(), start=1):
+                    dual_val = modelo.dual.get(cons, 0)
+                    duales.append([f"Restricción {i}", dual_val])
+            else:
+                for i in range(len(restricciones)):
+                    duales.append([f"Restricción {i+1}", "No disponible (modelo entero o binario)"])
+
+            st.table(duales)
+
+            # Guardar todo
             st.session_state["modelo_resuelto"] = True
             st.session_state["x_opt"] = x_opt
             st.session_state["y_opt"] = y_opt
