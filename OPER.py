@@ -446,9 +446,9 @@ if st.session_state.get("modelo_resuelto", False):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-        # -------- Precios sombra --------
+    # -------- Precios sombra --------
     st.markdown("<hr>", unsafe_allow_html=True)
-    st.subheader("Precios sombra (valores duales)")
+    st.subheader("Precios sombra")
 
     duales = st.session_state.get("duales", [])
 
@@ -463,7 +463,7 @@ if st.session_state.get("modelo_resuelto", False):
 
     # -------- Rangos de coeficientes --------
     st.markdown("<hr>", unsafe_allow_html=True)
-    st.subheader("Análisis de sensibilidad de los coeficientes de la FO")
+    st.subheader("Coeficientes de FO")
 
     tipo_x_val = st.session_state["tipo_x_val"]
     tipo_y_val = st.session_state["tipo_y_val"]
