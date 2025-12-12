@@ -27,19 +27,15 @@ st.markdown(watermark, unsafe_allow_html=True)
 # =====================================================
 
 
-st.title("Método gráfico (2 variables) con Pyomo")
+st.title("Método gráfico")
 
-st.markdown(
-    """
-Esta app resuelve un problema de programación lineal con dos variables:
+st.write("Esta app resuelve un problema de programación lineal con dos variables:")
 
-\\[
-\\min/\\max \\ Z = c_1 x + c_2 y
-\\]
+st.latex(r"""
+\min/\max \; Z = c_1 x + c_2 y
+""")
 
-sujeto a restricciones lineales en \\(x, y\\), y muestra la región factible.
-"""
-)
+st.write("Sujeto a restricciones lineales en \(x\) y \(y\), y muestra la región factible.")
 
 # =================== SIDEBAR: DATOS DEL MODELO ===================
 
