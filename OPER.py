@@ -2,6 +2,7 @@ import streamlit as st
 import pyomo.environ as pyo
 import numpy as np
 import matplotlib.pyplot as plt
+
 # =================== MARCA DE AGUA ===================
 watermark = """
 <style>
@@ -9,31 +10,43 @@ watermark = """
     position: fixed;
     top: 150px;
     right: 25px;
-    opacity: 0.95;                 /* casi visible completa */
-    font-size: 22px;               /* más grande */
-    font-weight: 900;              /* extra bold */
-    color: #ff4b4b;                /* rojo brillante Streamlit-like */
-    text-shadow: 1px 1px 2px #000; /* sombra para contraste */
-    z-index: 2000;                 /* por encima de todo */
+    opacity: 0.95;
+    font-size: 22px;
+    font-weight: 900;
+    color: #ff4b4b;
+    text-shadow: 1px 1px 2px #000;
+    z-index: 2000;
 }
 </style>
 <div class="watermark">by M.Sc. Dilan Mogollón</div>
 """
 st.markdown(watermark, unsafe_allow_html=True)
-# =====================================================
-st.title("Método gráfico")
-st.write("Esta app resuelve un problema de programación lineal con dos variables:")
-st.latex(r"""
-\min/\max \; Z = c_1 x + c_2 y
-""")
-st.write("Sujeto a restricciones lineales en \(x\) y \(y\), y muestra la región factible.")
+
+
+# =================== AUX: DOMINIO SEGÚN NATURALEZA ===================
+def obtener_dominio(tipo):
+    if tipo == "Real ≥ 0":
+        return pyo.NonNegativeReals
+    elif tipo == "Real libre":
+        return pyo.Reals
+    elif tipo == "Entera ≥ 0":
+        return pyo.NonNegativeIntegers
+    elif tipo == "Entera libre":
+        return pyo.Integers
+    elif tipo == "Binaria":
+        return pyo.Binary
+
+
 # =================== FUNCIÓN PARA CONSTRUIR Y RESOLVER ===================
-def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema):
+def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, tipo_y):
     m = pyo.ConcreteModel()
 
-    # Variables
-    m.x = pyo.Var(domain=pyo.NonNegativeReals)
-    m.y = pyo.Var(domain=pyo.NonNegativeReals)
+    # Variables según naturaleza elegida
+    dom_x = obtener_dominio(tipo_x)
+    dom_y = obtener_dominio(tipo_y)
+
+    m.x = pyo.Var(domain=dom_x)
+    m.y = pyo.Var(domain=dom_y)
 
     # Función objetivo
     if tipo_problema == "Minimizar":
@@ -85,6 +98,25 @@ with tab_modelo:
         sign_c2 = "+" if c2 >= 0 else "-"
         abs_c2 = abs(c2)
         st.latex(rf"{sentido_tex}\ Z = {c1}x {sign_c2} {abs_c2}y")
+
+    st.markdown("---")
+
+    # Naturaleza de las variables
+    st.subheader("Naturaleza de las variables")
+    col_nat_x, col_nat_y = st.columns(2)
+
+    with col_nat_x:
+        tipo_x = st.selectbox(
+            "Naturaleza de x",
+            ["Real ≥ 0", "Real libre", "Entera ≥ 0", "Entera libre", "Binaria"],
+            key="tipo_x"
+        )
+    with col_nat_y:
+        tipo_y = st.selectbox(
+            "Naturaleza de y",
+            ["Real ≥ 0", "Real libre", "Entera ≥ 0", "Entera libre", "Binaria"],
+            key="tipo_y"
+        )
 
     st.markdown("---")
 
@@ -143,13 +175,16 @@ with tab_modelo:
         restricciones.append((a, b, sentido, rhs))
 
     st.markdown("---")
-    st.markdown("Variables con restricción por defecto:  \n**x ≥ 0, y ≥ 0**")
+    st.markdown(
+        "Por defecto se grafica en el primer cuadrante; si eliges variables libres "
+        "la gráfica puede mostrar parte de la región fuera de x,y ≥ 0."
+    )
 
     # Botón para resolver
     if st.button("Resolver modelo"):
         try:
             modelo, resultado = construir_y_resolver_modelo(
-                c1, c2, restricciones, tipo_problema
+                c1, c2, restricciones, tipo_problema, tipo_x, tipo_y
             )
 
             x_opt = pyo.value(modelo.x)
@@ -172,6 +207,8 @@ with tab_modelo:
             st.session_state["restricciones"] = restricciones
             st.session_state["c1"] = c1
             st.session_state["c2"] = c2
+            st.session_state["tipo_x"] = tipo_x
+            st.session_state["tipo_y"] = tipo_y
 
         except Exception as e:
             st.error(f"Error al resolver el modelo: {e}")
@@ -193,13 +230,24 @@ with tab_grafica:
         y_opt = st.session_state["y_opt"]
         c1 = st.session_state["c1"]
         c2 = st.session_state["c2"]
+        tipo_x = st.session_state.get("tipo_x", "Real ≥ 0")
+        tipo_y = st.session_state.get("tipo_y", "Real ≥ 0")
 
         # Escala aproximada según RHS
         max_rhs = max([abs(r[3]) for r in restricciones] + [1.0])
         lim = max_rhs * 1.2
 
-        X = np.linspace(0, lim, 400)
-        Y = np.linspace(0, lim, 400)
+        # Si alguna variable es libre, graficar desde -lim a lim
+        solo_no_neg = all("≥ 0" in t or t == "Binaria" for t in [tipo_x, tipo_y])
+        if solo_no_neg:
+            x_min, x_max = 0, lim
+            y_min, y_max = 0, lim
+        else:
+            x_min, x_max = -lim, lim
+            y_min, y_max = -lim, lim
+
+        X = np.linspace(x_min, x_max, 400)
+        Y = np.linspace(y_min, y_max, 400)
         XX, YY = np.meshgrid(X, Y)
 
         # Matriz booleana de factibilidad
@@ -247,11 +295,4 @@ with tab_grafica:
             y_obj = (z_opt - c1 * X) / c2
             ax.plot(X, y_obj, linestyle="--", label="FO en Z*")
 
-        ax.set_xlim(0, lim)
-        ax.set_ylim(0, lim)
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_title("Región factible y solución óptima")
-        ax.legend(loc="upper right", fontsize=7)
-
-        st.pyplot(fig)
+        ax.set_xlim(x_min,
