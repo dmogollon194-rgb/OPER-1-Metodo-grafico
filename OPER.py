@@ -76,7 +76,8 @@ with tab_modelo:
     st.markdown("---")
 
     # Tipo de problema
-    tipo_problema = st.selectbox("Tipo de problema", ["Minimizar", "Maximizar"])
+    st.subheader("Tipo de problema", )
+    tipo_problema = st.selectbox(["Minimizar", "Maximizar"])
         # Naturaleza de las variables
     st.subheader("Naturaleza de las variables")
     col_nat_x, col_nat_y = st.columns(2)
