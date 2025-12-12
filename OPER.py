@@ -295,4 +295,11 @@ with tab_grafica:
             y_obj = (z_opt - c1 * X) / c2
             ax.plot(X, y_obj, linestyle="--", label="FO en Z*")
 
-        ax.set_xlim(x_min,
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title("Región factible y solución óptima")
+        ax.legend(loc="upper right", fontsize=7)
+
+        st.pyplot(fig)
