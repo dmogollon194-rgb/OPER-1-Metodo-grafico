@@ -27,16 +27,10 @@ st.markdown(watermark, unsafe_allow_html=True)
 def obtener_dominio(tipo):
     if tipo == "Real ≥ 0":
         return pyo.NonNegativeReals
-    elif tipo == "Real libre":
-        return pyo.Reals
     elif tipo == "Entera ≥ 0":
         return pyo.NonNegativeIntegers
-    elif tipo == "Entera libre":
-        return pyo.Integers
     elif tipo == "Binaria":
         return pyo.Binary
-
-
 # =================== FUNCIÓN PARA CONSTRUIR Y RESOLVER ===================
 def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, tipo_y):
     m = pyo.ConcreteModel()
@@ -83,25 +77,7 @@ with tab_modelo:
 
     # Tipo de problema
     tipo_problema = st.selectbox("Tipo de problema", ["Minimizar", "Maximizar"])
-
-    # Función objetivo
-    st.subheader("Función objetivo")
-
-    col_fo_inputs, col_fo_latex = st.columns([2, 3])
-
-    with col_fo_inputs:
-        c1 = st.number_input("Coeficiente de x en Z", value=3.0)
-        c2 = st.number_input("Coeficiente de y en Z", value=5.0)
-
-    with col_fo_latex:
-        sentido_tex = r"\min" if tipo_problema == "Minimizar" else r"\max"
-        sign_c2 = "+" if c2 >= 0 else "-"
-        abs_c2 = abs(c2)
-        st.latex(rf"{sentido_tex}\ Z = {c1}x {sign_c2} {abs_c2}y")
-
-    st.markdown("---")
-
-    # Naturaleza de las variables
+        # Naturaleza de las variables
     st.subheader("Naturaleza de las variables")
     col_nat_x, col_nat_y = st.columns(2)
 
@@ -117,8 +93,23 @@ with tab_modelo:
             ["Real ≥ 0", "Real libre", "Entera ≥ 0", "Entera libre", "Binaria"],
             key="tipo_y"
         )
+    # Función objetivo
+    st.subheader("Función objetivo")
+
+    col_fo_inputs, col_fo_latex = st.columns([2, 3])
+
+    with col_fo_inputs:
+        c1 = st.number_input("Coeficiente de X", value=3.0)
+        c2 = st.number_input("Coeficiente de Y", value=5.0)
+
+    with col_fo_latex:
+        sentido_tex = r"\min" if tipo_problema == "Minimizar" else r"\max"
+        sign_c2 = "+" if c2 >= 0 else "-"
+        abs_c2 = abs(c2)
+        st.latex(rf"{sentido_tex}\ Z = {c1}x {sign_c2} {abs_c2}y")
 
     st.markdown("---")
+
 
     # Número de restricciones
     st.subheader("Restricciones")
