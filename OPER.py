@@ -14,7 +14,7 @@ watermark = """
     opacity: 0.35;
     font-size: 18px;
     font-weight: bold;
-    color: #CC0000;
+    color:#ff4b4b;
     z-index: 1000;
 }
 </style>
