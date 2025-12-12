@@ -234,7 +234,7 @@ else:
     st.sidebar.info("Resuelve el modelo para ver la solución aquí.")
 
 # =================== CUERPO PRINCIPAL ===================
-st.markdown("<h2>Método gráfico (2 variables) con Pyomo</h2>", unsafe_allow_html=True)
+st.markdown("<h2>Método gráfico</h2>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
 # Naturaleza de las variables
