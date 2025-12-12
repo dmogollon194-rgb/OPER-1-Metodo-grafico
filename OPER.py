@@ -10,7 +10,7 @@ watermark = """
 .watermark {
     position: fixed;
     top: 15px;
-    right: 200px;
+    right: -200px;
     opacity: 0.35;
     font-size: 18px;
     font-weight: bold;
