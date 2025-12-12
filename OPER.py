@@ -9,13 +9,14 @@ watermark = """
 <style>
 .watermark {
     position: fixed;
-    top: 200px;
-    right: 15px;
-    opacity: 0.35;
-    font-size: 18px;
-    font-weight: bold;
-    color:#ff4b4b;
-    z-index: 1000;
+    top: 20px;
+    right: 25px;
+    opacity: 0.95;                 /* casi visible completa */
+    font-size: 22px;               /* más grande */
+    font-weight: 900;              /* extra bold */
+    color: #ff4b4b;                /* rojo brillante Streamlit-like */
+    text-shadow: 1px 1px 2px #000; /* sombra para contraste */
+    z-index: 2000;                 /* por encima de todo */
 }
 </style>
 
