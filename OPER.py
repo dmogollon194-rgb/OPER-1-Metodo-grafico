@@ -77,3 +77,4 @@ if st.button("Resolver modelo"):
 
     except Exception as e:
         st.error(f"Error al resolver el modelo: {e}")
+    st.sidebar("by M.Sc. Dilan Mogollón")
