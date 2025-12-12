@@ -77,21 +77,21 @@ with tab_modelo:
 
     # Tipo de problema
     st.subheader("Tipo de problema", )
-    tipo_problema = st.selectbox("",["Minimizar", "Maximizar"])
-        # Naturaleza de las variables
+    tipo_problema = st.selectbox("Seleccione: ",["Minimizar", "Maximizar"])
+    # Naturaleza de las variables
     st.subheader("Naturaleza de las variables")
     col_nat_x, col_nat_y = st.columns(2)
 
     with col_nat_x:
         tipo_x = st.selectbox(
-            "Naturaleza de x",
-            ["Real ≥ 0", "Real libre", "Entera ≥ 0", "Entera libre", "Binaria"],
+            "Naturaleza de X",
+            ["Real ≥ 0", "Entera ≥ 0", "Binaria"],
             key="tipo_x"
         )
     with col_nat_y:
         tipo_y = st.selectbox(
-            "Naturaleza de y",
-            ["Real ≥ 0", "Real libre", "Entera ≥ 0", "Entera libre", "Binaria"],
+            "Naturaleza de Y",
+            ["Real ≥ 0", "Entera ≥ 0", "Binaria"],
             key="tipo_y"
         )
     # Función objetivo
