@@ -480,8 +480,8 @@ if st.session_state.get("modelo_resuelto", False):
         c2_lo, c2_hi = formato_intervalo(*rangos["c2"])
 
         data_sens = [
-            ["c1 (coef. de x)", f"{c1_res:.4f}", c1_lo, c1_hi],
-            ["c2 (coef. de y)", f"{c2_res:.4f}", c2_lo, c2_hi],
+            ["c1", f"{c1_res:.4f}", c1_lo, c1_hi],
+            ["c2", f"{c2_res:.4f}", c2_lo, c2_hi],
         ]
         st.table(data_sens)
         st.caption(
