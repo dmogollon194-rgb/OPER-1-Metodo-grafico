@@ -176,16 +176,16 @@ if vista == "Modelo":
         col_a, col_b, col_sent, col_rhs = st.columns(4)
 
         with col_a:
-            a = st.number_input(f"Coeficiente de X{k+1}", value=1.0, key=f"a{k}")
+            a = st.number_input(f"Coeficiente de X en R{k+1}", value=1.0, key=f"a{k}")
 
         with col_b:
-            b = st.number_input(f"b{k+1}", value=1.0, key=f"b{k}")
+            b = st.number_input(f"Coeficiente de Y en R{k+1}", value=1.0, key=f"b{k}")
 
         with col_sent:
-            sentido = st.selectbox(f"Tipo {k+1}", ["<=", ">=", "="], key=f"sent{k}")
+            sentido = st.selectbox(f"Sentido de la desigualdad de R{k+1}", ["<=", ">=", "="], key=f"sent{k}")
 
         with col_rhs:
-            rhs = st.number_input(f"LD {k+1}", value=8.0, key=f"rhs{k}")
+            rhs = st.number_input(f"LD en R{k+1}", value=8.0, key=f"rhs{k}")
 
         st.latex(rf"{a}x + {b}y\ {sentido}\ {rhs}")
 
