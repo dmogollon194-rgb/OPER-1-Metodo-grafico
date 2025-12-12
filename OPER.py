@@ -75,7 +75,6 @@ st.markdown(css, unsafe_allow_html=True)
 # Contenedor principal estilizado
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
-
 # =================== AUX: DOMINIO SEGÚN NATURALEZA ===================
 def obtener_dominio(tipo):
     if tipo == "Real ≥ 0":
@@ -84,7 +83,6 @@ def obtener_dominio(tipo):
         return pyo.NonNegativeIntegers
     elif tipo == "Binaria":
         return pyo.Binary
-
 
 # =================== FUNCIÓN PARA CONSTRUIR Y RESOLVER ===================
 def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, tipo_y):
@@ -115,11 +113,9 @@ def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, ti
 
     return m, resultado
 
-
 # =================== SIDEBAR: NAVEGACIÓN ===================
 st.sidebar.title("Navegación")
 vista = st.sidebar.radio("Vista", ["Modelo", "Gráfica"])
-
 
 # =================== VISTA MODELO ===================
 if vista == "Modelo":
@@ -127,32 +123,54 @@ if vista == "Modelo":
     st.markdown("<h2>Definición del modelo</h2>", unsafe_allow_html=True)
     st.markdown("<hr>", unsafe_allow_html=True)
 
+    # Tipo de problema
     st.subheader("Tipo de problema")
-    tipo_problema = st.selectbox("Seleccione:", ["Minimizar", "Maximizar"])
+    tipo_problema = st.selectbox(
+        "Seleccione:",
+        ["Minimizar", "Maximizar"],
+        key="tipo_problema"
+    )
 
+    # Naturaleza variables
     st.subheader("Naturaleza de las variables")
     col1, col2 = st.columns(2)
 
     with col1:
-        tipo_x = st.selectbox("Naturaleza de X", ["Real ≥ 0", "Entera ≥ 0", "Binaria"], key="tipo_x")
+        tipo_x = st.selectbox(
+            "Naturaleza de X",
+            ["Real ≥ 0", "Entera ≥ 0", "Binaria"],
+            key="tipo_x"
+        )
 
     with col2:
-        tipo_y = st.selectbox("Naturaleza de Y", ["Real ≥ 0", "Entera ≥ 0", "Binaria"], key="tipo_y")
+        tipo_y = st.selectbox(
+            "Naturaleza de Y",
+            ["Real ≥ 0", "Entera ≥ 0", "Binaria"],
+            key="tipo_y"
+        )
 
+    # Función objetivo
     st.subheader("Función objetivo")
     col_fo_inputs, col_fo_latex = st.columns([2, 3])
 
     with col_fo_inputs:
-        c1 = st.number_input("Coeficiente de X", value=3.0)
-        c2 = st.number_input("Coeficiente de Y", value=5.0)
+        c1 = st.number_input("Coeficiente de X", value=3.0, key="c1")
+        c2 = st.number_input("Coeficiente de Y", value=5.0, key="c2")
 
     sentido_tex = r"\min" if tipo_problema == "Minimizar" else r"\max"
     st.latex(rf"{sentido_tex}\ Z = {c1}x + {c2}y")
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
+    # Restricciones
     st.subheader("Restricciones")
-    n_restr = st.number_input("Número de restricciones", min_value=1, max_value=6, value=2)
+    n_restr = st.number_input(
+        "Número de restricciones",
+        min_value=1,
+        max_value=6,
+        value=2,
+        key="n_restr"
+    )
 
     restricciones = []
     for k in range(n_restr):
@@ -163,19 +181,34 @@ if vista == "Modelo":
         col_a, col_b, col_sent, col_rhs = st.columns(4)
 
         with col_a:
-            a = st.number_input(f"Coeficiente de X en R{k+1}", value=1.0, key=f"a{k}")
+            a = st.number_input(
+                f"Coeficiente de X en R{k+1}",
+                value=1.0,
+                key=f"a{k}"
+            )
 
         with col_b:
-            b = st.number_input(f"Coeficiente de Y en R{k+1}", value=1.0, key=f"b{k}")
+            b = st.number_input(
+                f"Coeficiente de Y en R{k+1}",
+                value=1.0,
+                key=f"b{k}"
+            )
 
         with col_sent:
-            sentido = st.selectbox(f"Sentido en R{k+1}", ["<=", ">=", "="], key=f"sent{k}")
+            sentido = st.selectbox(
+                f"Sentido en R{k+1}",
+                ["<=", ">=", "="],
+                key=f"sent{k}"
+            )
 
         with col_rhs:
-            rhs = st.number_input(f"LD en R{k+1}", value=8.0, key=f"rhs{k}")
+            rhs = st.number_input(
+                f"LD en R{k+1}",
+                value=8.0,
+                key=f"rhs{k}"
+            )
 
         st.latex(rf"{a}x + {b}y\ {sentido}\ {rhs}")
-
         restricciones.append((a, b, sentido, rhs))
 
     # =================== BOTÓN RESOLVER (solo calcula y guarda) ===================
@@ -192,7 +225,7 @@ if vista == "Modelo":
             z_opt = pyo.value(modelo.obj)
             status = str(resultado.solver.termination_condition)
 
-            # ==== PRECIOS SOMBRA ====
+            # Precios sombra
             duales = []
             dualDisponible = (tipo_x == "Real ≥ 0" and tipo_y == "Real ≥ 0")
 
@@ -207,7 +240,7 @@ if vista == "Modelo":
                          "No disponible (modelo entero/binario)"]
                     )
 
-            # Guardar todo en session_state
+            # Guardar en session_state
             st.session_state["modelo_resuelto"] = True
             st.session_state["solver_status"] = status
             st.session_state["x_opt"] = x_opt
@@ -233,7 +266,6 @@ if vista == "Modelo":
 
         st.subheader("Precios sombra (valores duales)")
         st.table(st.session_state.get("duales", []))
-
 
 # =================== VISTA GRÁFICA ===================
 if vista == "Gráfica":
@@ -351,5 +383,5 @@ if vista == "Gráfica":
 
         st.plotly_chart(fig, use_container_width=True)
 
-# CERRAR CONTENEDOR PRINCIPAL
+# Cerrar contenedor principal
 st.markdown("</div>", unsafe_allow_html=True)
