@@ -207,8 +207,7 @@ with tab_modelo:
             st.session_state["restricciones"] = restricciones
             st.session_state["c1"] = c1
             st.session_state["c2"] = c2
-            st.session_state["tipo_x"] = tipo_x
-            st.session_state["tipo_y"] = tipo_y
+
 
         except Exception as e:
             st.error(f"Error al resolver el modelo: {e}")
