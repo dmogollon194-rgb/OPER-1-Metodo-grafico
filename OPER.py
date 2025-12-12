@@ -77,4 +77,26 @@ if st.button("Resolver modelo"):
 
     except Exception as e:
         st.error(f"Error al resolver el modelo: {e}")
-st.sidebar.markdown("### by M.Sc. Dilan Mogollón")
+import streamlit as st
+
+# =================== MARCA DE AGUA ===================
+watermark = """
+<style>
+.watermark {
+    position: fixed;
+    bottom: 15px;
+    right: 15px;
+    opacity: 0.35;
+    font-size: 18px;
+    font-weight: bold;
+    color: #888888;
+    z-index: 1000;
+}
+</style>
+
+<div class="watermark">by M.Sc. Dilan Mogollón</div>
+"""
+
+st.markdown(watermark, unsafe_allow_html=True)
+# ======================================================
+
