@@ -204,7 +204,6 @@ with tab_modelo:
         except Exception as e:
             st.error(f"Error al resolver el modelo: {e}")
 
-
 # -------- TAB GRÁFICA --------
 with tab_grafica:
     st.markdown(
@@ -216,29 +215,21 @@ with tab_grafica:
     if "modelo_resuelto" not in st.session_state or not st.session_state["modelo_resuelto"]:
         st.info("Primero define el modelo y pulsa **Resolver modelo** en la pestaña *Modelo*.")
     else:
+        import plotly.graph_objects as go
+        import plotly.express as px
+
         restricciones = st.session_state["restricciones"]
         x_opt = st.session_state["x_opt"]
         y_opt = st.session_state["y_opt"]
         c1 = st.session_state["c1"]
         c2 = st.session_state["c2"]
-        tipo_x = st.session_state.get("tipo_x", "Real ≥ 0")
-        tipo_y = st.session_state.get("tipo_y", "Real ≥ 0")
 
-        # Escala base según RHS
-        max_rhs = max([abs(r[3]) for r in restricciones] + [1.0])
+        # Determinar límites aproximados
+        max_rhs = max([abs(r[3]) for r in restricciones] + [10])
         lim = max_rhs * 1.2
 
-        # Si alguna variable es libre, graficar primero de -lim a lim
-        solo_no_neg = all("≥ 0" in t or t == "Binaria" for t in [tipo_x, tipo_y])
-        if solo_no_neg:
-            x_min_base, x_max_base = 0, lim
-            y_min_base, y_max_base = 0, lim
-        else:
-            x_min_base, x_max_base = -lim, lim
-            y_min_base, y_max_base = -lim, lim
-
-        X = np.linspace(x_min_base, x_max_base, 400)
-        Y = np.linspace(y_min_base, y_max_base, 400)
+        X = np.linspace(0, lim, 400)
+        Y = np.linspace(0, lim, 400)
         XX, YY = np.meshgrid(X, Y)
 
         # Matriz booleana de factibilidad
@@ -248,81 +239,84 @@ with tab_grafica:
                 factible &= (a * XX + b * YY <= rhs + 1e-9)
             elif sentido == ">=":
                 factible &= (a * XX + b * YY >= rhs - 1e-9)
-            else:  # "="
+            else:
                 factible &= np.isclose(a * XX + b * YY, rhs, atol=1e-3)
 
-        fig, ax = plt.subplots()
+        # Crear figura interactiva
+        fig = go.Figure()
 
-        # Región factible
-        ax.contourf(
-            XX,
-            YY,
-            factible,
-            levels=[0, 0.5, 1],
-            alpha=0.3,
-        )
+        # Región factible (semi-transparente)
+        fig.add_trace(go.Contour(
+            x=X,
+            y=Y,
+            z=factible.astype(int),
+            showscale=False,
+            colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,150,255,0.3)']],
+            opacity=0.4,
+            name="Región factible"
+        ))
 
-        # Líneas de las restricciones
+        # Líneas de restricciones
         for (a, b, sentido, rhs) in restricciones:
             if abs(b) > 1e-8:
                 y_line = (rhs - a * X) / b
-                ax.plot(X, y_line, label=f"{a}x + {b}y {sentido} {rhs}")
+                fig.add_trace(go.Scatter(
+                    x=X,
+                    y=y_line,
+                    mode="lines",
+                    name=f"{a}x + {b}y {sentido} {rhs}"
+                ))
             else:
+                # Recta vertical
                 if abs(a) > 1e-8:
                     x_line = rhs / a
-                    ax.axvline(x_line, label=f"{a}x {sentido} {rhs}")
+                    fig.add_trace(go.Scatter(
+                        x=[x_line, x_line],
+                        y=[0, lim],
+                        mode="lines",
+                        name=f"{a}x {sentido} {rhs}"
+                    ))
 
         # Punto óptimo
-        ax.scatter([x_opt], [y_opt], s=50)
-        ax.annotate(
-            "Óptimo", (x_opt, y_opt),
-            textcoords="offset points",
-            xytext=(5, 5),
-        )
+        fig.add_trace(go.Scatter(
+            x=[x_opt],
+            y=[y_opt],
+            mode="markers+text",
+            text=["Óptimo"],
+            textposition="top right",
+            marker=dict(size=10, color="red"),
+            name="Solución óptima"
+        ))
 
-        # Recta de la FO que pasa por el óptimo (solo si c2 ≠ 0)
+        # Recta de la FO pasando por el óptimo
         if abs(c2) > 1e-8:
             z_opt = c1 * x_opt + c2 * y_opt
             y_obj = (z_opt - c1 * X) / c2
-            ax.plot(X, y_obj, linestyle="--", label="FO en Z*")
+            fig.add_trace(go.Scatter(
+                x=X,
+                y=y_obj,
+                mode="lines",
+                line=dict(dash="dash", color="red"),
+                name="FO en Z*"
+            ))
 
-        # ==== AJUSTE DE ZOOM A LA REGIÓN FACTIBLE ====
-        if np.any(factible):
-            xs = XX[factible]
-            ys = YY[factible]
-            x_min = xs.min()
-            x_max = xs.max()
-            y_min = ys.min()
-            y_max = ys.max()
-
-            # Incluir siempre el óptimo dentro del cuadro
-            x_min = min(x_min, x_opt)
-            x_max = max(x_max, x_opt)
-            y_min = min(y_min, y_opt)
-            y_max = max(y_max, y_opt)
-
-            # Margen alrededor (10%)
-            dx = x_max - x_min
-            dy = y_max - y_min
-            if dx == 0:
-                dx = 1.0
-            if dy == 0:
-                dy = 1.0
-
-            x_min -= 0.1 * dx
-            x_max += 0.1 * dx
-            y_min -= 0.1 * dy
-            y_max += 0.1 * dy
+        # Ajustar zoom a la región visible
+        xs = XX[factible]
+        ys = YY[factible]
+        if len(xs) > 0:
+            fig.update_xaxes(range=[max(0, xs.min() - 1), xs.max() + 1])
+            fig.update_yaxes(range=[max(0, ys.min() - 1), ys.max() + 1])
         else:
-            # Si no hay región factible, usar los límites base
-            x_min, x_max = x_min_base, x_max_base
-            y_min, y_max = y_min_base, y_max_base
+            fig.update_xaxes(range=[0, lim])
+            fig.update_yaxes(range=[0, lim])
 
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_title("Región factible y solución óptima")
-        ax.legend(loc="upper right", fontsize=7)
+        fig.update_layout(
+            width=800,
+            height=600,
+            title="Región factible y solución óptima (interactivo)",
+            xaxis_title="x",
+            yaxis_title="y",
+            legend=dict(x=0.7, y=1.0)
+        )
 
-        st.pyplot(fig)
+        st.plotly_chart(fig, use_container_width=True)
