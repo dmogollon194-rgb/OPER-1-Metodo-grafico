@@ -31,6 +31,8 @@ def obtener_dominio(tipo):
         return pyo.NonNegativeIntegers
     elif tipo == "Binaria":
         return pyo.Binary
+
+
 # =================== FUNCIÓN PARA CONSTRUIR Y RESOLVER ===================
 def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, tipo_y):
     m = pyo.ConcreteModel()
@@ -63,12 +65,13 @@ def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, ti
     return m, resultado
 
 
-# =================== TABS: MODELO / GRÁFICA ===================
-tab_modelo, tab_grafica = st.tabs(["Modelo", "Gráfica"])
+# =================== SIDEBAR: SELECCIÓN DE VISTA ===================
+st.sidebar.title("Navegación")
+vista = st.sidebar.radio("Vista", ["Modelo", "Gráfica"])
 
-# -------- TAB MODELO --------
-with tab_modelo:
-    # Título grande y centrado
+
+# =================== VISTA MODELO ===================
+if vista == "Modelo":
     st.markdown(
         "<h2 style='text-align:center; margin-top:0;'>Definición del modelo</h2>",
         unsafe_allow_html=True
@@ -76,8 +79,9 @@ with tab_modelo:
     st.markdown("---")
 
     # Tipo de problema
-    st.subheader("Tipo de problema", )
-    tipo_problema = st.selectbox("Seleccione: ",["Minimizar", "Maximizar"])
+    st.subheader("Tipo de problema")
+    tipo_problema = st.selectbox("Seleccione:", ["Minimizar", "Maximizar"])
+
     # Naturaleza de las variables
     st.subheader("Naturaleza de las variables")
     col_nat_x, col_nat_y = st.columns(2)
@@ -94,7 +98,7 @@ with tab_modelo:
             ["Real ≥ 0", "Entera ≥ 0", "Binaria"],
             key="tipo_y"
         )
-    # Función objetivo
+
     st.subheader("Función objetivo")
 
     col_fo_inputs, col_fo_latex = st.columns([2, 3])
@@ -111,7 +115,6 @@ with tab_modelo:
 
     st.markdown("---")
 
-
     # Número de restricciones
     st.subheader("Restricciones")
     n_restr = st.number_input(
@@ -124,14 +127,12 @@ with tab_modelo:
 
     restricciones = []
     for k in range(n_restr):
-        # Título de la restricción y línea separadora
         st.markdown("---")
         st.markdown(
             f"<h4 style='margin-bottom:0;'>Restricción {k+1}</h4>",
             unsafe_allow_html=True
         )
 
-        # Una sola fila con todos los inputs
         col_a, col_b, col_sent, col_rhs = st.columns([1, 1, 1, 1])
 
         with col_a:
@@ -159,7 +160,6 @@ with tab_modelo:
                 key=f"rhs_{k}",
             )
 
-        # Ecuación en LaTeX debajo de la fila de inputs
         sign_b = "+" if b >= 0 else "-"
         abs_b = abs(b)
         st.latex(rf"{a}x {sign_b} {abs_b}y \; {sentido} \; {rhs}")
@@ -167,12 +167,7 @@ with tab_modelo:
         restricciones.append((a, b, sentido, rhs))
 
     st.markdown("---")
-    st.markdown(
-        "Por defecto se grafica en el primer cuadrante; si eliges variables libres "
-        "la gráfica puede mostrar parte de la región fuera de x,y ≥ 0."
-    )
 
-    # Botón para resolver
     if st.button("Resolver modelo"):
         try:
             modelo, resultado = construir_y_resolver_modelo(
@@ -191,7 +186,6 @@ with tab_modelo:
             st.write(f"y* = {y_opt:.4f}")
             st.write(f"Z* = {z_opt:.4f}")
 
-            # Guardar en session_state para la pestaña Gráfica
             st.session_state["modelo_resuelto"] = True
             st.session_state["x_opt"] = x_opt
             st.session_state["y_opt"] = y_opt
@@ -200,12 +194,12 @@ with tab_modelo:
             st.session_state["c1"] = c1
             st.session_state["c2"] = c2
 
-
         except Exception as e:
             st.error(f"Error al resolver el modelo: {e}")
 
-# -------- TAB GRÁFICA --------
-with tab_grafica:
+
+# =================== VISTA GRÁFICA ===================
+if vista == "Gráfica":
     st.markdown(
         "<h2 style='text-align:center; margin-top:0;'>Gráfica de la región factible</h2>",
         unsafe_allow_html=True
@@ -213,10 +207,9 @@ with tab_grafica:
     st.markdown("---")
 
     if "modelo_resuelto" not in st.session_state or not st.session_state["modelo_resuelto"]:
-        st.info("Primero define el modelo y pulsa **Resolver modelo** en la pestaña *Modelo*.")
+        st.info("Primero define el modelo y pulsa **Resolver modelo** en la vista *Modelo* (sidebar).")
     else:
         import plotly.graph_objects as go
-        import plotly.express as px
 
         restricciones = st.session_state["restricciones"]
         x_opt = st.session_state["x_opt"]
@@ -232,7 +225,6 @@ with tab_grafica:
         Y = np.linspace(0, lim, 400)
         XX, YY = np.meshgrid(X, Y)
 
-        # Matriz booleana de factibilidad
         factible = np.ones_like(XX, dtype=bool)
         for (a, b, sentido, rhs) in restricciones:
             if sentido == "<=":
@@ -242,10 +234,9 @@ with tab_grafica:
             else:
                 factible &= np.isclose(a * XX + b * YY, rhs, atol=1e-3)
 
-        # Crear figura interactiva
         fig = go.Figure()
 
-        # Región factible (semi-transparente)
+        # Región factible
         fig.add_trace(go.Contour(
             x=X,
             y=Y,
@@ -256,7 +247,7 @@ with tab_grafica:
             name="Región factible"
         ))
 
-        # Líneas de restricciones
+        # Restricciones
         for (a, b, sentido, rhs) in restricciones:
             if abs(b) > 1e-8:
                 y_line = (rhs - a * X) / b
@@ -267,7 +258,6 @@ with tab_grafica:
                     name=f"{a}x + {b}y {sentido} {rhs}"
                 ))
             else:
-                # Recta vertical
                 if abs(a) > 1e-8:
                     x_line = rhs / a
                     fig.add_trace(go.Scatter(
@@ -277,7 +267,7 @@ with tab_grafica:
                         name=f"{a}x {sentido} {rhs}"
                     ))
 
-        # Punto óptimo
+        # Óptimo
         fig.add_trace(go.Scatter(
             x=[x_opt],
             y=[y_opt],
@@ -288,7 +278,7 @@ with tab_grafica:
             name="Solución óptima"
         ))
 
-        # Recta de la FO pasando por el óptimo
+        # FO en Z*
         if abs(c2) > 1e-8:
             z_opt = c1 * x_opt + c2 * y_opt
             y_obj = (z_opt - c1 * X) / c2
@@ -300,7 +290,6 @@ with tab_grafica:
                 name="FO en Z*"
             ))
 
-        # Ajustar zoom a la región visible
         xs = XX[factible]
         ys = YY[factible]
         if len(xs) > 0:
@@ -313,7 +302,7 @@ with tab_grafica:
         fig.update_layout(
             width=800,
             height=600,
-            title="Región factible y solución óptima (interactivo)",
+            title="Región factible y solución óptima",
             xaxis_title="x",
             yaxis_title="y",
             legend=dict(x=0.7, y=1.0)
