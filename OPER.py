@@ -224,21 +224,21 @@ with tab_grafica:
         tipo_x = st.session_state.get("tipo_x", "Real ≥ 0")
         tipo_y = st.session_state.get("tipo_y", "Real ≥ 0")
 
-        # Escala aproximada según RHS
+        # Escala base según RHS
         max_rhs = max([abs(r[3]) for r in restricciones] + [1.0])
         lim = max_rhs * 1.2
 
-        # Si alguna variable es libre, graficar desde -lim a lim
+        # Si alguna variable es libre, graficar primero de -lim a lim
         solo_no_neg = all("≥ 0" in t or t == "Binaria" for t in [tipo_x, tipo_y])
         if solo_no_neg:
-            x_min, x_max = 0, lim
-            y_min, y_max = 0, lim
+            x_min_base, x_max_base = 0, lim
+            y_min_base, y_max_base = 0, lim
         else:
-            x_min, x_max = -lim, lim
-            y_min, y_max = -lim, lim
+            x_min_base, x_max_base = -lim, lim
+            y_min_base, y_max_base = -lim, lim
 
-        X = np.linspace(x_min, x_max, 400)
-        Y = np.linspace(y_min, y_max, 400)
+        X = np.linspace(x_min_base, x_max_base, 400)
+        Y = np.linspace(y_min_base, y_max_base, 400)
         XX, YY = np.meshgrid(X, Y)
 
         # Matriz booleana de factibilidad
@@ -285,6 +285,38 @@ with tab_grafica:
             z_opt = c1 * x_opt + c2 * y_opt
             y_obj = (z_opt - c1 * X) / c2
             ax.plot(X, y_obj, linestyle="--", label="FO en Z*")
+
+        # ==== AJUSTE DE ZOOM A LA REGIÓN FACTIBLE ====
+        if np.any(factible):
+            xs = XX[factible]
+            ys = YY[factible]
+            x_min = xs.min()
+            x_max = xs.max()
+            y_min = ys.min()
+            y_max = ys.max()
+
+            # Incluir siempre el óptimo dentro del cuadro
+            x_min = min(x_min, x_opt)
+            x_max = max(x_max, x_opt)
+            y_min = min(y_min, y_opt)
+            y_max = max(y_max, y_opt)
+
+            # Margen alrededor (10%)
+            dx = x_max - x_min
+            dy = y_max - y_min
+            if dx == 0:
+                dx = 1.0
+            if dy == 0:
+                dy = 1.0
+
+            x_min -= 0.1 * dx
+            x_max += 0.1 * dx
+            y_min -= 0.1 * dy
+            y_max += 0.1 * dy
+        else:
+            # Si no hay región factible, usar los límites base
+            x_min, x_max = x_min_base, x_max_base
+            y_min, y_max = y_min_base, y_max_base
 
         ax.set_xlim(x_min, x_max)
         ax.set_ylim(y_min, y_max)
