@@ -446,10 +446,20 @@ if st.session_state.get("modelo_resuelto", False):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # -------- Precios sombra --------
+        # -------- Precios sombra --------
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Precios sombra (valores duales)")
-    st.table(st.session_state.get("duales", []))
+
+    duales = st.session_state.get("duales", [])
+
+    if isinstance(duales, list) and len(duales) > 0:
+        tabla_duales = {
+            "Restricción": [row[0] for row in duales],
+            "Precio sombra (Dual)": [row[1] for row in duales],
+        }
+        st.table(tabla_duales)
+    else:
+        st.info("No hay precios sombra disponibles.")
 
     # -------- Rangos de coeficientes --------
     st.markdown("<hr>", unsafe_allow_html=True)
@@ -479,15 +489,13 @@ if st.session_state.get("modelo_resuelto", False):
         c1_lo, c1_hi = formato_intervalo(*rangos["c1"])
         c2_lo, c2_hi = formato_intervalo(*rangos["c2"])
 
-        data_sens = [
-            ["c1", f"{c1_res:.4f}", c1_lo, c1_hi],
-            ["c2", f"{c2_res:.4f}", c2_lo, c2_hi],
-        ]
-        st.table(data_sens)
-        st.caption(
-            "Intervalos en los que puede variar cada coeficiente de la función "
-            "objetivo, manteniendo fijo el otro, sin cambiar el punto óptimo (x*, y*)."
-        )
+        tabla_sens = {
+            "Coeficiente": ["c1 (coef. de x)", "c2 (coef. de y)"],
+            "Valor actual": [f"{c1_res:.4f}", f"{c2_res:.4f}"],
+            "Límite inferior": [c1_lo, c2_lo],
+            "Límite superior": [c1_hi, c2_hi],
+        }
+        st.table(tabla_sens)
 
 # Cerrar contenedor principal
 st.markdown("</div>", unsafe_allow_html=True)
