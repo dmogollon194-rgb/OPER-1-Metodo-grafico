@@ -90,7 +90,7 @@ def obtener_dominio(tipo):
 def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, tipo_y):
     m = pyo.ConcreteModel()
 
-    # Declarar dual
+    # Suffix para precios sombra
     m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
     m.x = pyo.Var(domain=obtener_dominio(tipo_x))
@@ -201,7 +201,7 @@ if vista == "Modelo":
             st.subheader("Precios sombra (valores duales)")
             duales = []
 
-            # Si hay enteras, no existirán duales
+            # Dual solo tiene sentido con modelo lineal continuo
             dualDisponible = (tipo_x == "Real ≥ 0" and tipo_y == "Real ≥ 0")
 
             if dualDisponible:
@@ -210,7 +210,8 @@ if vista == "Modelo":
                     duales.append([f"Restricción {i}", dual_val])
             else:
                 for i in range(len(restricciones)):
-                    duales.append([f"Restricción {i+1}", "No disponible (modelo entero o binario)"])
+                    duales.append([f"Restricción {i+1}",
+                                   "No disponible (modelo entero/binario)"])
 
             st.table(duales)
 
@@ -244,6 +245,7 @@ if vista == "Gráfica":
         c1 = st.session_state["c1"]
         c2 = st.session_state["c2"]
 
+        # Determinar límites aproximados
         max_rhs = max([abs(r[3]) for r in restricciones] + [10])
         lim = max_rhs * 1.2
 
@@ -251,46 +253,93 @@ if vista == "Gráfica":
         Y = np.linspace(0, lim, 400)
         XX, YY = np.meshgrid(X, Y)
 
-        factible = np.ones_like(XX, bool)
+        # Matriz booleana de factibilidad
+        factible = np.ones_like(XX, dtype=bool)
         for a, b, s, rhs in restricciones:
             if s == "<=":
-                factible &= (a * XX + b * YY <= rhs)
+                factible &= (a * XX + b * YY <= rhs + 1e-9)
             elif s == ">=":
-                factible &= (a * XX + b * YY >= rhs)
+                factible &= (a * XX + b * YY >= rhs - 1e-9)
             else:
                 factible &= np.isclose(a * XX + b * YY, rhs, atol=1e-3)
 
         fig = go.Figure()
 
+        # Región factible (como antes)
         fig.add_trace(go.Contour(
-            x=X, y=Y, z=factible.astype(int),
+            x=X,
+            y=Y,
+            z=factible.astype(int),
             showscale=False,
-            opacity=0.3,
-            colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,150,255,0.4)"]],
+            colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,150,255,0.3)']],
+            opacity=0.4,
             name="Región factible"
         ))
 
+        # Líneas de restricciones
         for (a, b, s, rhs) in restricciones:
             if abs(b) > 1e-8:
-                fig.add_trace(go.Scatter(x=X, y=(rhs - a * X) / b,
-                    mode="lines", name=f"{a}x + {b}y {s} {rhs}"))
-            else:
+                y_line = (rhs - a * X) / b
                 fig.add_trace(go.Scatter(
-                    x=[rhs / a, rhs / a], y=[0, lim],
-                    mode="lines", name=f"{a}x {s} {rhs}"
+                    x=X,
+                    y=y_line,
+                    mode="lines",
+                    name=f"{a}x + {b}y {s} {rhs}"
                 ))
+            else:
+                if abs(a) > 1e-8:
+                    x_line = rhs / a
+                    fig.add_trace(go.Scatter(
+                        x=[x_line, x_line],
+                        y=[0, lim],
+                        mode="lines",
+                        name=f"{a}x {s} {rhs}"
+                    ))
 
+        # Punto óptimo
         fig.add_trace(go.Scatter(
-            x=[x_opt], y=[y_opt],
+            x=[x_opt],
+            y=[y_opt],
             mode="markers+text",
-            text=["Óptimo"], textposition="top right",
-            marker=dict(size=10, color="red")
+            text=["Óptimo"],
+            textposition="top right",
+            marker=dict(size=10, color="red"),
+            name="Solución óptima"
         ))
 
+        # Recta de la FO pasando por el óptimo
+        if abs(c2) > 1e-8:
+            z_opt = c1 * x_opt + c2 * y_opt
+            y_obj = (z_opt - c1 * X) / c2
+            fig.add_trace(go.Scatter(
+                x=X,
+                y=y_obj,
+                mode="lines",
+                line=dict(dash="dash", color="red"),
+                name="FO en Z*"
+            ))
+
+        # Zoom automático sobre región factible (como antes)
+        xs = XX[factible]
+        ys = YY[factible]
+        if xs.size > 0:
+            x_min = max(0, xs.min() - 1)
+            x_max = xs.max() + 1
+            y_min = max(0, ys.min() - 1)
+            y_max = ys.max() + 1
+            fig.update_xaxes(range=[x_min, x_max])
+            fig.update_yaxes(range=[y_min, y_max])
+        else:
+            fig.update_xaxes(range=[0, lim])
+            fig.update_yaxes(range=[0, lim])
+
         fig.update_layout(
-            width=800, height=600,
+            width=800,
+            height=600,
             title="Región factible y solución óptima",
-            xaxis_title="x", yaxis_title="y"
+            xaxis_title="x",
+            yaxis_title="y",
+            legend=dict(x=0.7, y=1.0)
         )
 
         st.plotly_chart(fig, use_container_width=True)
