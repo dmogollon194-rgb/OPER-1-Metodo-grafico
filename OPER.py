@@ -217,7 +217,7 @@ tipo_problema = st.sidebar.selectbox(
 n_restr = st.sidebar.number_input(
     "Número de restricciones",
     min_value=1,
-    max_value=6,
+    max_value=400,
     value=2,
     key="n_restr_widget"
 )
