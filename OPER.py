@@ -1,6 +1,7 @@
 import streamlit as st
 import pyomo.environ as pyo
 import numpy as np
+import plotly.graph_objects as go
 
 # =================== MARCA DE AGUA ===================
 watermark = """
@@ -85,8 +86,8 @@ def obtener_dominio(tipo):
 
 # =================== ENUMERAR VÉRTICES (para sensibilidad FO) ===================
 def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
-    # Incluye no negatividad si aplica
     todas = list(restricciones)
+
     if tipo_x in ["Real ≥ 0", "Entera ≥ 0"]:
         todas.append((1.0, 0.0, ">=", 0.0))  # x >= 0
     if tipo_y in ["Real ≥ 0", "Entera ≥ 0"]:
@@ -97,6 +98,7 @@ def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
             return False
         if tipo_y in ["Real ≥ 0", "Entera ≥ 0"] and y < -tol:
             return False
+
         for (a, b, sentido, rhs) in restricciones:
             val = a * x + b * y
             if sentido == "<=" and val > rhs + tol:
@@ -109,15 +111,19 @@ def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
 
     vertices = []
     n = len(todas)
+
     for i in range(n):
-        a1, b1, s1, rhs1 = todas[i]
-        for j in range(i+1, n):
-            a2, b2, s2, rhs2 = todas[j]
-            det = a1*b2 - a2*b1
+        a1, b1, _, rhs1 = todas[i]
+        for j in range(i + 1, n):
+            a2, b2, _, rhs2 = todas[j]
+            det = a1 * b2 - a2 * b1
+
             if abs(det) < tol:
                 continue
-            x = (rhs1*b2 - rhs2*b1) / det
-            y = (a1*rhs2 - a2*rhs1) / det
+
+            x = (rhs1 * b2 - rhs2 * b1) / det
+            y = (a1 * rhs2 - a2 * rhs1) / det
+
             if es_factible(x, y):
                 vertices.append((x, y))
 
@@ -125,6 +131,7 @@ def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
     for x, y in vertices:
         key = (round(x, 6), round(y, 6))
         uniq[key] = (x, y)
+
     return list(uniq.values())
 
 # =================== RANGOS DE COEFICIENTES FO ===================
@@ -151,13 +158,14 @@ def rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema):
         if minimiza:
             # c1*dx + c2*dy <= 0
             if abs(dx) > 1e-9:
-                bound = -c2*dy/dx
+                bound = -c2 * dy / dx
                 if dx > 0:
                     c1_max = min(c1_max, bound)
                 else:
                     c1_min = max(c1_min, bound)
+
             if abs(dy) > 1e-9:
-                bound = -c1*dx/dy
+                bound = -c1 * dx / dy
                 if dy > 0:
                     c2_max = min(c2_max, bound)
                 else:
@@ -165,13 +173,14 @@ def rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema):
         else:
             # c1*dx + c2*dy >= 0
             if abs(dx) > 1e-9:
-                bound = -c2*dy/dx
+                bound = -c2 * dy / dx
                 if dx > 0:
                     c1_min = max(c1_min, bound)
                 else:
                     c1_max = min(c1_max, bound)
+
             if abs(dy) > 1e-9:
-                bound = -c1*dx/dy
+                bound = -c1 * dx / dy
                 if dy > 0:
                     c2_min = max(c2_min, bound)
                 else:
@@ -188,21 +197,22 @@ def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, ti
     m.y = pyo.Var(domain=obtener_dominio(tipo_y))
 
     if tipo_problema == "Minimizar":
-        m.obj = pyo.Objective(expr=c1*m.x + c2*m.y, sense=pyo.minimize)
+        m.obj = pyo.Objective(expr=c1 * m.x + c2 * m.y, sense=pyo.minimize)
     else:
-        m.obj = pyo.Objective(expr=c1*m.x + c2*m.y, sense=pyo.maximize)
+        m.obj = pyo.Objective(expr=c1 * m.x + c2 * m.y, sense=pyo.maximize)
 
     m.cons = pyo.ConstraintList()
     for (a, b, sentido, rhs) in restricciones:
         if sentido == "<=":
-            m.cons.add(a*m.x + b*m.y <= rhs)
+            m.cons.add(a * m.x + b * m.y <= rhs)
         elif sentido == ">=":
-            m.cons.add(a*m.x + b*m.y >= rhs)
+            m.cons.add(a * m.x + b * m.y >= rhs)
         else:
-            m.cons.add(a*m.x + b*m.y == rhs)
+            m.cons.add(a * m.x + b * m.y == rhs)
 
     solver = pyo.SolverFactory("appsi_highs")
     resultado = solver.solve(m, load_solutions=True)
+
     return m, resultado
 
 # =================== SIDEBAR ===================
@@ -217,8 +227,9 @@ tipo_problema = st.sidebar.selectbox(
 n_restr = st.sidebar.number_input(
     "Número de restricciones",
     min_value=1,
-    max_value=400,
+    max_value=20,
     value=2,
+    step=1,
     key="n_restr_widget"
 )
 
@@ -240,12 +251,14 @@ st.markdown("<hr>", unsafe_allow_html=True)
 # Naturaleza de las variables
 st.subheader("Naturaleza de las variables")
 col1, col2 = st.columns(2)
+
 with col1:
     tipo_x = st.selectbox(
         "Naturaleza de X",
         ["Real ≥ 0", "Entera ≥ 0", "Binaria"],
         key="tipo_x_widget"
     )
+
 with col2:
     tipo_y = st.selectbox(
         "Naturaleza de Y",
@@ -256,6 +269,7 @@ with col2:
 # Función objetivo
 st.subheader("Función objetivo")
 col_fo_inputs, col_fo_latex = st.columns([2, 3])
+
 with col_fo_inputs:
     c1 = st.number_input("Coeficiente de X", value=3.0, key="c1_widget")
     c2 = st.number_input("Coeficiente de Y", value=5.0, key="c2_widget")
@@ -265,41 +279,64 @@ st.latex(rf"{sentido_tex}\ Z = {c1}x + {c2}y")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# Restricciones
+# =================== RESTRICCIONES CON PANEL DESPLEGABLE ===================
 st.subheader("Restricciones")
 restricciones = []
+
 for k in range(int(n_restr)):
-    st.markdown("<hr>", unsafe_allow_html=True)
-    st.markdown(f"<h4>Restricción {k+1}</h4>", unsafe_allow_html=True)
+    a_preview = st.session_state.get(f"a{k}_widget", 1.0)
+    b_preview = st.session_state.get(f"b{k}_widget", 1.0)
+    sentido_preview = st.session_state.get(f"sent{k}_widget", "<=")
+    rhs_preview = st.session_state.get(f"rhs{k}_widget", 8.0)
 
-    col_a, col_b, col_sent, col_rhs = st.columns(4)
-    with col_a:
-        a = st.number_input(
-            f"Coeficiente de X en R{k+1}",
-            value=1.0,
-            key=f"a{k}_widget"
-        )
-    with col_b:
-        b = st.number_input(
-            f"Coeficiente de Y en R{k+1}",
-            value=1.0,
-            key=f"b{k}_widget"
-        )
-    with col_sent:
-        sentido = st.selectbox(
-            f"Sentido en R{k+1}",
-            ["<=", ">=", "="],
-            key=f"sent{k}_widget"
-        )
-    with col_rhs:
-        rhs = st.number_input(
-            f"LD en R{k+1}",
-            value=8.0,
-            key=f"rhs{k}_widget"
-        )
+    titulo = (
+        f"Restricción {k+1}: "
+        f"{a_preview:.2f}x + {b_preview:.2f}y {sentido_preview} {rhs_preview:.2f}"
+    )
 
-    st.latex(rf"{a}x + {b}y\ {sentido}\ {rhs}")
-    restricciones.append((a, b, sentido, rhs))
+    with st.expander(titulo, expanded=False):
+        col_a, col_b, col_sent, col_rhs = st.columns(4)
+
+        with col_a:
+            a = st.number_input(
+                f"Coeficiente de X en R{k+1}",
+                value=float(a_preview),
+                key=f"a{k}_widget"
+            )
+
+        with col_b:
+            b = st.number_input(
+                f"Coeficiente de Y en R{k+1}",
+                value=float(b_preview),
+                key=f"b{k}_widget"
+            )
+
+        with col_sent:
+            opciones = ["<=", ">=", "="]
+            idx = opciones.index(sentido_preview) if sentido_preview in opciones else 0
+            sentido = st.selectbox(
+                f"Sentido en R{k+1}",
+                opciones,
+                index=idx,
+                key=f"sent{k}_widget"
+            )
+
+        with col_rhs:
+            rhs = st.number_input(
+                f"LD en R{k+1}",
+                value=float(rhs_preview),
+                key=f"rhs{k}_widget"
+            )
+
+        st.latex(rf"{a}x + {b}y\ {sentido}\ {rhs}")
+
+    # Guardamos siempre los valores actuales
+    a_actual = st.session_state.get(f"a{k}_widget", 1.0)
+    b_actual = st.session_state.get(f"b{k}_widget", 1.0)
+    sentido_actual = st.session_state.get(f"sent{k}_widget", "<=")
+    rhs_actual = st.session_state.get(f"rhs{k}_widget", 8.0)
+
+    restricciones.append((a_actual, b_actual, sentido_actual, rhs_actual))
 
 # =================== BOTÓN: RESOLVER Y GUARDAR ===================
 if st.button("Resolver y graficar"):
@@ -313,9 +350,9 @@ if st.button("Resolver y graficar"):
         z_opt = pyo.value(modelo.obj)
         status = str(resultado.solver.termination_condition)
 
-        # Precios sombra
         duales = []
         dual_continuo = (tipo_x == "Real ≥ 0" and tipo_y == "Real ≥ 0")
+
         if dual_continuo:
             for i, cons in enumerate(modelo.cons.values(), start=1):
                 dual_val = modelo.dual.get(cons, 0)
@@ -323,11 +360,9 @@ if st.button("Resolver y graficar"):
         else:
             for i in range(len(restricciones)):
                 duales.append(
-                    [f"Restricción {i+1}",
-                     "No disponible (modelo entero/binario)"]
+                    [f"Restricción {i+1}", "No disponible (modelo entero/binario)"]
                 )
 
-        # Vértices y rangos de coeficientes (solo continuo)
         if dual_continuo:
             vertices = enumerar_vertices(restricciones, tipo_x, tipo_y)
             rangos = rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema)
@@ -335,7 +370,6 @@ if st.button("Resolver y graficar"):
             vertices = []
             rangos = None
 
-        # Guardar en session_state (nombres distintos a los keys de widgets)
         st.session_state["modelo_resuelto"] = True
         st.session_state["solver_status"] = status
         st.session_state["x_opt"] = x_opt
@@ -356,15 +390,12 @@ if st.button("Resolver y graficar"):
 
 # =================== MOSTRAR GRÁFICA Y ANÁLISIS ===================
 if st.session_state.get("modelo_resuelto", False):
-    import plotly.graph_objects as go
-
     restricciones = st.session_state["restricciones"]
     x_opt = st.session_state["x_opt"]
     y_opt = st.session_state["y_opt"]
     c1_res = st.session_state["c1"]
     c2_res = st.session_state["c2"]
 
-    # -------- Gráfica --------
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Gráfica de la región factible")
 
@@ -376,17 +407,21 @@ if st.session_state.get("modelo_resuelto", False):
     XX, YY = np.meshgrid(X, Y)
 
     factible = np.ones_like(XX, dtype=bool)
+
     for a, b, s, rhs in restricciones:
         if s == "<=":
-            factible &= (a*XX + b*YY <= rhs + 1e-9)
+            factible &= (a * XX + b * YY <= rhs + 1e-9)
         elif s == ">=":
-            factible &= (a*XX + b*YY >= rhs - 1e-9)
+            factible &= (a * XX + b * YY >= rhs - 1e-9)
         else:
-            factible &= np.isclose(a*XX + b*YY, rhs, atol=1e-3)
+            factible &= np.isclose(a * XX + b * YY, rhs, atol=1e-3)
 
     fig = go.Figure()
+
     fig.add_trace(go.Contour(
-        x=X, y=Y, z=factible.astype(int),
+        x=X,
+        y=Y,
+        z=factible.astype(int),
         showscale=False,
         colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,150,255,0.3)']],
         opacity=0.4,
@@ -395,38 +430,47 @@ if st.session_state.get("modelo_resuelto", False):
 
     for (a, b, s, rhs) in restricciones:
         if abs(b) > 1e-8:
-            y_line = (rhs - a*X) / b
+            y_line = (rhs - a * X) / b
             fig.add_trace(go.Scatter(
-                x=X, y=y_line, mode="lines",
+                x=X,
+                y=y_line,
+                mode="lines",
                 name=f"{a}x + {b}y {s} {rhs}"
             ))
         else:
             if abs(a) > 1e-8:
                 x_line = rhs / a
                 fig.add_trace(go.Scatter(
-                    x=[x_line, x_line], y=[0, lim],
-                    mode="lines", name=f"{a}x {s} {rhs}"
+                    x=[x_line, x_line],
+                    y=[0, lim],
+                    mode="lines",
+                    name=f"{a}x {s} {rhs}"
                 ))
 
     fig.add_trace(go.Scatter(
-        x=[x_opt], y=[y_opt],
+        x=[x_opt],
+        y=[y_opt],
         mode="markers+text",
-        text=["Óptimo"], textposition="top right",
+        text=["Óptimo"],
+        textposition="top right",
         marker=dict(size=10, color="red"),
         name="Solución óptima"
     ))
 
     if abs(c2_res) > 1e-8:
-        z_opt = c1_res*x_opt + c2_res*y_opt
-        y_obj = (z_opt - c1_res*X) / c2_res
+        z_opt_line = c1_res * x_opt + c2_res * y_opt
+        y_obj = (z_opt_line - c1_res * X) / c2_res
         fig.add_trace(go.Scatter(
-            x=X, y=y_obj, mode="lines",
+            x=X,
+            y=y_obj,
+            mode="lines",
             line=dict(dash="dash", color="red"),
             name="FO en Z*"
         ))
 
     xs = XX[factible]
     ys = YY[factible]
+
     if xs.size > 0:
         x_min = max(0, xs.min() - 1)
         x_max = xs.max() + 1
@@ -439,11 +483,14 @@ if st.session_state.get("modelo_resuelto", False):
         fig.update_yaxes(range=[0, lim])
 
     fig.update_layout(
-        width=800, height=600,
+        width=800,
+        height=600,
         title="Región factible y solución óptima",
-        xaxis_title="x", yaxis_title="y",
+        xaxis_title="x",
+        yaxis_title="y",
         legend=dict(x=0.7, y=1.0)
     )
+
     st.plotly_chart(fig, use_container_width=True)
 
     # -------- Precios sombra --------
