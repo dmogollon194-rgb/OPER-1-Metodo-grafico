@@ -582,8 +582,7 @@ if st.session_state.get("modelo_resuelto", False):
 
     if not (tipo_x_val == "Real ≥ 0" and tipo_y_val == "Real ≥ 0"):
         st.info(
-            "El análisis de rangos de los coeficientes de la función objetivo "
-            "solo se realiza para modelos continuos (variables reales)."
+            "Análisis no permitido"
         )
     elif rangos is None:
         st.info("No se pudieron calcular los rangos de los coeficientes.")
