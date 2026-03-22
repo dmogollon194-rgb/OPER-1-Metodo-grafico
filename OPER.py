@@ -232,7 +232,10 @@ def rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema):
 # =================== CONSTRUIR Y RESOLVER MODELO ===================
 def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, tipo_y):
     m = pyo.ConcreteModel()
-    m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+
+    dual_continuo = (tipo_x == "Real ≥ 0" and tipo_y == "Real ≥ 0")
+    if dual_continuo:
+        m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
     m.x = pyo.Var(domain=obtener_dominio(tipo_x))
     m.y = pyo.Var(domain=obtener_dominio(tipo_y))
