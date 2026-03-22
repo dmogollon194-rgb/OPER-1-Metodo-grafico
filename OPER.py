@@ -75,6 +75,10 @@ st.markdown(css, unsafe_allow_html=True)
 # Contenedor principal estilizado
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
+# =================== INICIALIZAR SESSION STATE ===================
+if "expander_abierto" not in st.session_state:
+    st.session_state["expander_abierto"] = None
+
 # =================== AUX: DOMINIO SEGÚN NATURALEZA ===================
 def obtener_dominio(tipo):
     if tipo == "Real ≥ 0":
@@ -83,6 +87,15 @@ def obtener_dominio(tipo):
         return pyo.NonNegativeIntegers
     elif tipo == "Binaria":
         return pyo.Binary
+
+# =================== AUX: FORMATO ECUACIONES ===================
+def fmt_num(v):
+    if abs(v - round(v)) < 1e-9:
+        return str(int(round(v)))
+    return f"{v:.2f}"
+
+def ecuacion_texto(a, b, sentido, rhs):
+    return f"{fmt_num(a)}x + {fmt_num(b)}y {sentido} {fmt_num(rhs)}"
 
 # =================== FACTIBILIDAD PUNTO ===================
 def es_factible_punto(x, y, restricciones, tipo_x, tipo_y, tol=1e-7):
@@ -111,13 +124,11 @@ def es_factible_punto(x, y, restricciones, tipo_x, tipo_y, tol=1e-7):
 def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
     todas = list(restricciones)
 
-    # No negatividad
     if tipo_x in ["Real ≥ 0", "Entera ≥ 0"]:
-        todas.append((1.0, 0.0, ">=", 0.0))  # x >= 0
+        todas.append((1.0, 0.0, ">=", 0.0))
     if tipo_y in ["Real ≥ 0", "Entera ≥ 0"]:
-        todas.append((0.0, 1.0, ">=", 0.0))  # y >= 0
+        todas.append((0.0, 1.0, ">=", 0.0))
 
-    # Cotas binarias
     if tipo_x == "Binaria":
         todas.append((1.0, 0.0, ">=", 0.0))
         todas.append((1.0, 0.0, "<=", 1.0))
@@ -150,7 +161,7 @@ def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
 
     return list(uniq.values())
 
-# =================== ORDENAR VÉRTICES DEL POLÍGONO ===================
+# =================== ORDENAR VÉRTICES ===================
 def ordenar_vertices(vertices):
     if len(vertices) <= 2:
         return vertices
@@ -245,6 +256,10 @@ def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, ti
 
     return m, resultado
 
+# =================== CALLBACKS PARA MANTENER EXPANDER ABIERTO ===================
+def abrir_expander(k):
+    st.session_state["expander_abierto"] = k
+
 # =================== SIDEBAR ===================
 st.sidebar.title("Configuración")
 
@@ -309,7 +324,7 @@ st.latex(rf"{sentido_tex}\ Z = {c1}x + {c2}y")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# =================== RESTRICCIONES CON PANEL DESPLEGABLE ===================
+# =================== RESTRICCIONES ===================
 st.subheader("Restricciones")
 restricciones = []
 
@@ -319,26 +334,29 @@ for k in range(int(n_restr)):
     sentido_preview = st.session_state.get(f"sent{k}_widget", "<=")
     rhs_preview = st.session_state.get(f"rhs{k}_widget", 8.0)
 
-    titulo = (
-        f"Restricción {k+1}: "
-        f"{a_preview:.2f}x + {b_preview:.2f}y {sentido_preview} {rhs_preview:.2f}"
-    )
+    titulo = f"Restricción {k+1}: {ecuacion_texto(a_preview, b_preview, sentido_preview, rhs_preview)}"
 
-    with st.expander(titulo, expanded=False):
+    expanded_now = (st.session_state.get("expander_abierto") == k)
+
+    with st.expander(titulo, expanded=expanded_now):
         col_a, col_b, col_sent, col_rhs = st.columns(4)
 
         with col_a:
             a = st.number_input(
                 f"Coeficiente de X en R{k+1}",
                 value=float(a_preview),
-                key=f"a{k}_widget"
+                key=f"a{k}_widget",
+                on_change=abrir_expander,
+                args=(k,)
             )
 
         with col_b:
             b = st.number_input(
                 f"Coeficiente de Y en R{k+1}",
                 value=float(b_preview),
-                key=f"b{k}_widget"
+                key=f"b{k}_widget",
+                on_change=abrir_expander,
+                args=(k,)
             )
 
         with col_sent:
@@ -348,14 +366,18 @@ for k in range(int(n_restr)):
                 f"Sentido en R{k+1}",
                 opciones,
                 index=idx,
-                key=f"sent{k}_widget"
+                key=f"sent{k}_widget",
+                on_change=abrir_expander,
+                args=(k,)
             )
 
         with col_rhs:
             rhs = st.number_input(
                 f"LD en R{k+1}",
                 value=float(rhs_preview),
-                key=f"rhs{k}_widget"
+                key=f"rhs{k}_widget",
+                on_change=abrir_expander,
+                args=(k,)
             )
 
         st.latex(rf"{a}x + {b}y\ {sentido}\ {rhs}")
@@ -384,13 +406,15 @@ if st.button("Resolver y graficar"):
 
         if dual_continuo:
             for i, cons in enumerate(modelo.cons.values(), start=1):
+                a_i, b_i, sentido_i, rhs_i = restricciones[i - 1]
+                ecuacion_i = ecuacion_texto(a_i, b_i, sentido_i, rhs_i)
                 dual_val = modelo.dual.get(cons, 0)
-                duales.append([f"Restricción {i}", dual_val])
+                duales.append([ecuacion_i, dual_val])
         else:
             for i in range(len(restricciones)):
-                duales.append(
-                    [f"Restricción {i+1}", "No disponible (modelo entero/binario)"]
-                )
+                a_i, b_i, sentido_i, rhs_i = restricciones[i]
+                ecuacion_i = ecuacion_texto(a_i, b_i, sentido_i, rhs_i)
+                duales.append([ecuacion_i, "No disponible (modelo entero/binario)"])
 
         vertices = enumerar_vertices(restricciones, tipo_x, tipo_y)
 
@@ -429,7 +453,6 @@ if st.session_state.get("modelo_resuelto", False):
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Gráfica de la región factible")
 
-    # Límite de visualización
     candidatos_x = [x_opt] + [v[0] for v in vertices] if vertices else [x_opt]
     candidatos_y = [y_opt] + [v[1] for v in vertices] if vertices else [y_opt]
 
@@ -441,7 +464,6 @@ if st.session_state.get("modelo_resuelto", False):
 
     fig = go.Figure()
 
-    # -------- Región factible exacta como polígono --------
     if len(vertices) >= 3:
         vertices_ordenados = ordenar_vertices(vertices)
         x_poly = [v[0] for v in vertices_ordenados] + [vertices_ordenados[0][0]]
@@ -457,7 +479,6 @@ if st.session_state.get("modelo_resuelto", False):
             name="Región factible"
         ))
 
-    # -------- Rectas de restricciones --------
     for (a, b, s, rhs) in restricciones:
         if abs(b) > 1e-8:
             y_line = (rhs - a * X) / b
@@ -465,7 +486,7 @@ if st.session_state.get("modelo_resuelto", False):
                 x=X,
                 y=y_line,
                 mode="lines",
-                name=f"{a}x + {b}y {s} {rhs}"
+                name=ecuacion_texto(a, b, s, rhs)
             ))
         else:
             if abs(a) > 1e-8:
@@ -474,10 +495,9 @@ if st.session_state.get("modelo_resuelto", False):
                     x=[x_line, x_line],
                     y=[0, lim],
                     mode="lines",
-                    name=f"{a}x {s} {rhs}"
+                    name=ecuacion_texto(a, 0, s, rhs)
                 ))
 
-    # -------- Punto óptimo --------
     fig.add_trace(go.Scatter(
         x=[x_opt],
         y=[y_opt],
@@ -488,7 +508,6 @@ if st.session_state.get("modelo_resuelto", False):
         name="Solución óptima"
     ))
 
-    # -------- Recta de la FO en el óptimo --------
     if abs(c2_res) > 1e-8:
         z_opt_line = c1_res * x_opt + c2_res * y_opt
         y_obj = (z_opt_line - c1_res * X) / c2_res
@@ -509,7 +528,6 @@ if st.session_state.get("modelo_resuelto", False):
             name="FO en Z*"
         ))
 
-    # Ajuste automático de ejes
     if len(vertices) >= 1:
         xs = [v[0] for v in vertices] + [x_opt]
         ys = [v[1] for v in vertices] + [y_opt]
