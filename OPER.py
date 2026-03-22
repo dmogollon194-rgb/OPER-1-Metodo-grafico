@@ -84,30 +84,46 @@ def obtener_dominio(tipo):
     elif tipo == "Binaria":
         return pyo.Binary
 
-# =================== ENUMERAR VÉRTICES (para sensibilidad FO) ===================
+# =================== FACTIBILIDAD PUNTO ===================
+def es_factible_punto(x, y, restricciones, tipo_x, tipo_y, tol=1e-7):
+    if tipo_x in ["Real ≥ 0", "Entera ≥ 0"] and x < -tol:
+        return False
+    if tipo_y in ["Real ≥ 0", "Entera ≥ 0"] and y < -tol:
+        return False
+
+    if tipo_x == "Binaria" and not (-tol <= x <= 1 + tol):
+        return False
+    if tipo_y == "Binaria" and not (-tol <= y <= 1 + tol):
+        return False
+
+    for (a, b, sentido, rhs) in restricciones:
+        val = a * x + b * y
+        if sentido == "<=" and val > rhs + tol:
+            return False
+        elif sentido == ">=" and val < rhs - tol:
+            return False
+        elif sentido == "=" and abs(val - rhs) > tol:
+            return False
+
+    return True
+
+# =================== ENUMERAR VÉRTICES ===================
 def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
     todas = list(restricciones)
 
+    # No negatividad
     if tipo_x in ["Real ≥ 0", "Entera ≥ 0"]:
         todas.append((1.0, 0.0, ">=", 0.0))  # x >= 0
     if tipo_y in ["Real ≥ 0", "Entera ≥ 0"]:
         todas.append((0.0, 1.0, ">=", 0.0))  # y >= 0
 
-    def es_factible(x, y):
-        if tipo_x in ["Real ≥ 0", "Entera ≥ 0"] and x < -tol:
-            return False
-        if tipo_y in ["Real ≥ 0", "Entera ≥ 0"] and y < -tol:
-            return False
-
-        for (a, b, sentido, rhs) in restricciones:
-            val = a * x + b * y
-            if sentido == "<=" and val > rhs + tol:
-                return False
-            elif sentido == ">=" and val < rhs - tol:
-                return False
-            elif sentido == "=" and abs(val - rhs) > tol:
-                return False
-        return True
+    # Cotas binarias
+    if tipo_x == "Binaria":
+        todas.append((1.0, 0.0, ">=", 0.0))
+        todas.append((1.0, 0.0, "<=", 1.0))
+    if tipo_y == "Binaria":
+        todas.append((0.0, 1.0, ">=", 0.0))
+        todas.append((0.0, 1.0, "<=", 1.0))
 
     vertices = []
     n = len(todas)
@@ -124,7 +140,7 @@ def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
             x = (rhs1 * b2 - rhs2 * b1) / det
             y = (a1 * rhs2 - a2 * rhs1) / det
 
-            if es_factible(x, y):
+            if es_factible_punto(x, y, restricciones, tipo_x, tipo_y, tol):
                 vertices.append((x, y))
 
     uniq = {}
@@ -133,6 +149,22 @@ def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
         uniq[key] = (x, y)
 
     return list(uniq.values())
+
+# =================== ORDENAR VÉRTICES DEL POLÍGONO ===================
+def ordenar_vertices(vertices):
+    if len(vertices) <= 2:
+        return vertices
+
+    xs = np.array([v[0] for v in vertices])
+    ys = np.array([v[1] for v in vertices])
+
+    cx = np.mean(xs)
+    cy = np.mean(ys)
+
+    angulos = np.arctan2(ys - cy, xs - cx)
+    orden = np.argsort(angulos)
+
+    return [vertices[i] for i in orden]
 
 # =================== RANGOS DE COEFICIENTES FO ===================
 def rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema):
@@ -156,7 +188,6 @@ def rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema):
         dy = y_opt - vy
 
         if minimiza:
-            # c1*dx + c2*dy <= 0
             if abs(dx) > 1e-9:
                 bound = -c2 * dy / dx
                 if dx > 0:
@@ -171,7 +202,6 @@ def rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema):
                 else:
                     c2_min = max(c2_min, bound)
         else:
-            # c1*dx + c2*dy >= 0
             if abs(dx) > 1e-9:
                 bound = -c2 * dy / dx
                 if dx > 0:
@@ -330,7 +360,6 @@ for k in range(int(n_restr)):
 
         st.latex(rf"{a}x + {b}y\ {sentido}\ {rhs}")
 
-    # Guardamos siempre los valores actuales
     a_actual = st.session_state.get(f"a{k}_widget", 1.0)
     b_actual = st.session_state.get(f"b{k}_widget", 1.0)
     sentido_actual = st.session_state.get(f"sent{k}_widget", "<=")
@@ -363,11 +392,11 @@ if st.button("Resolver y graficar"):
                     [f"Restricción {i+1}", "No disponible (modelo entero/binario)"]
                 )
 
+        vertices = enumerar_vertices(restricciones, tipo_x, tipo_y)
+
         if dual_continuo:
-            vertices = enumerar_vertices(restricciones, tipo_x, tipo_y)
             rangos = rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema)
         else:
-            vertices = []
             rangos = None
 
         st.session_state["modelo_resuelto"] = True
@@ -395,39 +424,40 @@ if st.session_state.get("modelo_resuelto", False):
     y_opt = st.session_state["y_opt"]
     c1_res = st.session_state["c1"]
     c2_res = st.session_state["c2"]
+    vertices = st.session_state.get("vertices", [])
 
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Gráfica de la región factible")
 
-    max_rhs = max([abs(r[3]) for r in restricciones] + [10])
-    lim = max_rhs * 1.2
+    # Límite de visualización
+    candidatos_x = [x_opt] + [v[0] for v in vertices] if vertices else [x_opt]
+    candidatos_y = [y_opt] + [v[1] for v in vertices] if vertices else [y_opt]
+
+    max_x = max(candidatos_x + [10])
+    max_y = max(candidatos_y + [10])
+    lim = 1.25 * max(max_x, max_y)
 
     X = np.linspace(0, lim, 400)
-    Y = np.linspace(0, lim, 400)
-    XX, YY = np.meshgrid(X, Y)
-
-    factible = np.ones_like(XX, dtype=bool)
-
-    for a, b, s, rhs in restricciones:
-        if s == "<=":
-            factible &= (a * XX + b * YY <= rhs + 1e-9)
-        elif s == ">=":
-            factible &= (a * XX + b * YY >= rhs - 1e-9)
-        else:
-            factible &= np.isclose(a * XX + b * YY, rhs, atol=1e-3)
 
     fig = go.Figure()
 
-    fig.add_trace(go.Contour(
-        x=X,
-        y=Y,
-        z=factible.astype(int),
-        showscale=False,
-        colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,150,255,0.3)']],
-        opacity=0.4,
-        name="Región factible"
-    ))
+    # -------- Región factible exacta como polígono --------
+    if len(vertices) >= 3:
+        vertices_ordenados = ordenar_vertices(vertices)
+        x_poly = [v[0] for v in vertices_ordenados] + [vertices_ordenados[0][0]]
+        y_poly = [v[1] for v in vertices_ordenados] + [vertices_ordenados[0][1]]
 
+        fig.add_trace(go.Scatter(
+            x=x_poly,
+            y=y_poly,
+            mode="lines",
+            fill="toself",
+            fillcolor="rgba(0,150,255,0.25)",
+            line=dict(color="rgba(0,150,255,0.9)", width=2),
+            name="Región factible"
+        ))
+
+    # -------- Rectas de restricciones --------
     for (a, b, s, rhs) in restricciones:
         if abs(b) > 1e-8:
             y_line = (rhs - a * X) / b
@@ -447,6 +477,7 @@ if st.session_state.get("modelo_resuelto", False):
                     name=f"{a}x {s} {rhs}"
                 ))
 
+    # -------- Punto óptimo --------
     fig.add_trace(go.Scatter(
         x=[x_opt],
         y=[y_opt],
@@ -457,6 +488,7 @@ if st.session_state.get("modelo_resuelto", False):
         name="Solución óptima"
     ))
 
+    # -------- Recta de la FO en el óptimo --------
     if abs(c2_res) > 1e-8:
         z_opt_line = c1_res * x_opt + c2_res * y_opt
         y_obj = (z_opt_line - c1_res * X) / c2_res
@@ -467,15 +499,26 @@ if st.session_state.get("modelo_resuelto", False):
             line=dict(dash="dash", color="red"),
             name="FO en Z*"
         ))
+    elif abs(c1_res) > 1e-8:
+        x_line = (c1_res * x_opt + c2_res * y_opt) / c1_res
+        fig.add_trace(go.Scatter(
+            x=[x_line, x_line],
+            y=[0, lim],
+            mode="lines",
+            line=dict(dash="dash", color="red"),
+            name="FO en Z*"
+        ))
 
-    xs = XX[factible]
-    ys = YY[factible]
+    # Ajuste automático de ejes
+    if len(vertices) >= 1:
+        xs = [v[0] for v in vertices] + [x_opt]
+        ys = [v[1] for v in vertices] + [y_opt]
 
-    if xs.size > 0:
-        x_min = max(0, xs.min() - 1)
-        x_max = xs.max() + 1
-        y_min = max(0, ys.min() - 1)
-        y_max = ys.max() + 1
+        x_min = min(xs) - 5
+        x_max = max(xs) + 5
+        y_min = min(ys) - 5
+        y_max = max(ys) + 5
+
         fig.update_xaxes(range=[x_min, x_max])
         fig.update_yaxes(range=[y_min, y_max])
     else:
@@ -483,12 +526,12 @@ if st.session_state.get("modelo_resuelto", False):
         fig.update_yaxes(range=[0, lim])
 
     fig.update_layout(
-        width=800,
+        width=850,
         height=600,
         title="Región factible y solución óptima",
         xaxis_title="x",
         yaxis_title="y",
-        legend=dict(x=0.7, y=1.0)
+        legend=dict(x=0.68, y=1.0)
     )
 
     st.plotly_chart(fig, use_container_width=True)
