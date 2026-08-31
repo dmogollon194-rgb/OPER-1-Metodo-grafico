@@ -88,6 +88,20 @@ def get_domain(tipo):
     elif tipo == "Binary":
         return pyo.Binary
 
+
+def get_highs_solver(time_limit=15.0):
+    """Create a HiGHS solver with a finite time limit to keep the UI responsive."""
+    solver = pyo.SolverFactory("appsi_highs")
+    try:
+        solver.options["time_limit"] = float(time_limit)
+    except Exception:
+        # Compatibility fallback for APPsi versions exposing config directly.
+        try:
+            solver.config.time_limit = float(time_limit)
+        except Exception:
+            pass
+    return solver
+
 # =================== HELPER: EQUATION objective functionRMATTING ===================
 def fmt_num(v):
     if abs(v - round(v)) < 1e-9:
@@ -478,7 +492,9 @@ def rhs_sensitivity_ranges(constraints, x_opt, y_opt, c1, c2, problem_type):
     return results
 
 # =================== BUILD AND SOLVE MODEL ===================
-def build_and_solve_model(c1, c2, constraints, problem_type, x_type, y_type):
+def build_and_solve_model(
+    c1, c2, constraints, problem_type, x_type, y_type, solver_time_limit=15.0
+):
     m = pyo.ConcreteModel()
 
     continuous_dual = (x_type == "Nonnegative Real" and y_type == "Nonnegative Real")
@@ -502,7 +518,7 @@ def build_and_solve_model(c1, c2, constraints, problem_type, x_type, y_type):
         else:
             m.cons.add(a * m.x + b * m.y == rhs)
 
-    solver = pyo.SolverFactory("appsi_highs")
+    solver = get_highs_solver(solver_time_limit)
     result = solver.solve(m, load_solutions=True)
 
     return m, result
@@ -569,7 +585,8 @@ def _incumbent_still_optimal(
 
     try:
         model_test, result_test = build_and_solve_model(
-            c1, c2, constraints, problem_type, x_type, y_type
+            c1, c2, constraints, problem_type, x_type, y_type,
+            solver_time_limit=4.0
         )
     except Exception:
         return False
@@ -588,7 +605,7 @@ def _incumbent_still_optimal(
 
 def _search_discrete_boundary(
     current_value, direction, max_change, first_step, predicate,
-    bisection_iterations=6
+    bisection_iterations=4
 ):
     """
     Search one side of the optimality interval for a scalar parameter.
@@ -692,7 +709,7 @@ def _solve_rhs_breakpoint(
     else:
         return None
 
-    solver = pyo.SolverFactory("appsi_highs")
+    solver = get_highs_solver(4.0)
     try:
         result = solver.solve(m, load_solutions=True)
     except Exception:
@@ -1046,21 +1063,11 @@ if st.button("Solve and plot"):
                 constraints, x_opt, y_opt, c1, c2, problem_type
             )
         else:
+            # MIP sensitivity can require many reoptimizations. Do not block the
+            # main Solve action; calculate it only when the user explicitly asks.
             sensitivity_mode = "discrete"
-            with st.spinner("Calculating discrete sensitivity by reoptimization..."):
-                rhs_ranges = discrete_rhs_sensitivity_ranges(
-                    constraints, x_opt, y_opt, c1, c2, problem_type,
-                    x_type, y_type,
-                    search_step=discrete_search_step,
-                    max_change=discrete_max_change
-                )
-                ranges = discrete_coefficient_sensitivity_ranges(
-                    constraints, x_opt, y_opt, c1, c2, problem_type,
-                    x_type, y_type,
-                    search_step=discrete_search_step,
-                    max_change=discrete_max_change
-                )
-            st.success("Discrete sensitivity calculated.")
+            rhs_ranges = None
+            ranges = None
 
         st.session_state["model_solved"] = True
         st.session_state["solver_status"] = status
@@ -1227,6 +1234,35 @@ if st.session_state.get("model_solved", False):
             "The analysis tracks the range in which the current (x*, y*) remains optimal."
         )
 
+        if st.session_state.get("rhs_ranges_result") is None or st.session_state.get("coefficient_ranges_result") is None:
+            st.warning(
+                "The optimization model has already been solved. Discrete sensitivity is "
+                "calculated separately because it requires multiple additional MIP solves."
+            )
+
+        if st.button("Calculate discrete sensitivity", key="calculate_discrete_sensitivity_button"):
+            with st.spinner("Calculating discrete sensitivity..."):
+                try:
+                    rhs_ranges_calc = discrete_rhs_sensitivity_ranges(
+                        constraints, x_opt, y_opt, c1_result, c2_result,
+                        st.session_state["problem_type_value"],
+                        x_type_value, y_type_value,
+                        search_step=st.session_state.get("discrete_search_step", 1.0),
+                        max_change=st.session_state.get("discrete_max_change", 50.0)
+                    )
+                    coeff_ranges_calc = discrete_coefficient_sensitivity_ranges(
+                        constraints, x_opt, y_opt, c1_result, c2_result,
+                        st.session_state["problem_type_value"],
+                        x_type_value, y_type_value,
+                        search_step=st.session_state.get("discrete_search_step", 1.0),
+                        max_change=st.session_state.get("discrete_max_change", 50.0)
+                    )
+                    st.session_state["rhs_ranges_result"] = rhs_ranges_calc
+                    st.session_state["coefficient_ranges_result"] = coeff_ranges_calc
+                    st.success("Discrete sensitivity calculated.")
+                except Exception as e:
+                    st.error(f"Discrete sensitivity could not be completed: {e}")
+
     # -------- RHS ranges --------
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Constraint RHS Sensitivity")
@@ -1259,7 +1295,10 @@ if st.session_state.get("model_solved", False):
         return ("≥ " + txt) if limited else txt
 
     if rhs_ranges is None:
-        st.info("The RHS sensitivity ranges could not be calculated for this solution.")
+        if sensitivity_mode == "discrete":
+            st.info("Click 'Calculate discrete sensitivity' above to generate the RHS ranges.")
+        else:
+            st.info("The RHS sensitivity ranges could not be calculated for this solution.")
     else:
         rhs_table = {
             "Constraint": [],
@@ -1342,7 +1381,10 @@ if st.session_state.get("model_solved", False):
     sensitivity_mode = st.session_state.get("sensitivity_mode", "continuous")
 
     if ranges is None:
-        st.info("The objective coefficient sensitivity ranges could not be calculated.")
+        if sensitivity_mode == "discrete":
+            st.info("Click 'Calculate discrete sensitivity' above to generate the coefficient ranges.")
+        else:
+            st.info("The objective coefficient sensitivity ranges could not be calculated.")
     elif sensitivity_mode == "continuous":
         def format_interval(lo, hi):
             def fmt(v):
