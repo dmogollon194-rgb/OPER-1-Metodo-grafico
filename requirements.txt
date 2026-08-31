@@ -1,5 +1,5 @@
 streamlit
 pyomo
 highspy
-matplotlib
+numpy
 plotly
