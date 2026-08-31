@@ -891,7 +891,7 @@ if st.session_state.get("model_solved", False):
         )
 
     # -------- Coefficient ranges --------
-    st.markdown("<hr>", unsafe_allow_html=True)
+    st.markdown("<hr>", unsafe_allow_html=True) 
     st.subheader("Objective Function Coefficients")
 
     x_type_value = st.session_state["x_type_value"]
