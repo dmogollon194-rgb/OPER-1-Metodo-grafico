@@ -229,6 +229,254 @@ def coefficient_ranges(vertices, x_opt, y_opt, c1, c2, problem_type):
 
     return {"c1": (c1_min, c1_max), "c2": (c2_min, c2_max)}
 
+# =================== RHS SENSITIVITY RANGES ===================
+def _canonical_rhs_rows(constraints):
+    """Convert constraints to a canonical representation for 2D LP sensitivity."""
+    rows = []
+
+    for i, (a, b, operator, rhs) in enumerate(constraints):
+        if operator == "<=":
+            rows.append({
+                "n": np.array([float(a), float(b)]),
+                "r": float(rhs),
+                "kind": "ineq",
+                "source": i,
+                "rhs_factor": 1.0,
+            })
+        elif operator == ">=":
+            # a*x+b*y >= rhs  <=>  -a*x-b*y <= -rhs
+            rows.append({
+                "n": np.array([-float(a), -float(b)]),
+                "r": -float(rhs),
+                "kind": "ineq",
+                "source": i,
+                "rhs_factor": -1.0,
+            })
+        else:
+            rows.append({
+                "n": np.array([float(a), float(b)]),
+                "r": float(rhs),
+                "kind": "eq",
+                "source": i,
+                "rhs_factor": 1.0,
+            })
+
+    # Non-negativity bounds x >= 0 and y >= 0
+    rows.append({
+        "n": np.array([-1.0, 0.0]),
+        "r": 0.0,
+        "kind": "ineq",
+        "source": None,
+        "rhs_factor": 0.0,
+        "name": "x >= 0",
+    })
+    rows.append({
+        "n": np.array([0.0, -1.0]),
+        "r": 0.0,
+        "kind": "ineq",
+        "source": None,
+        "rhs_factor": 0.0,
+        "name": "y >= 0",
+    })
+
+    return rows
+
+
+def _dual_feasible_bases(rows, x_opt, y_opt, c1, c2, problem_type, tol=1e-8):
+    """Find all 2-row optimal bases compatible with the current optimum."""
+    point = np.array([float(x_opt), float(y_opt)])
+    active = []
+
+    for idx, row in enumerate(rows):
+        activity = float(np.dot(row["n"], point))
+        if row["kind"] == "eq" or abs(activity - row["r"]) <= 1e-7:
+            active.append(idx)
+
+    target = np.array([float(c1), float(c2)])
+    if problem_type == "Minimize":
+        target = -target
+
+    candidates = []
+
+    for p in range(len(active)):
+        for q in range(p + 1, len(active)):
+            i = active[p]
+            j = active[q]
+            B = np.vstack([rows[i]["n"], rows[j]["n"]])
+            det = float(np.linalg.det(B))
+
+            if abs(det) <= tol:
+                continue
+
+            try:
+                multipliers = np.linalg.solve(B.T, target)
+            except np.linalg.LinAlgError:
+                continue
+
+            ok = True
+            for lam, row_idx in zip(multipliers, (i, j)):
+                if rows[row_idx]["kind"] == "ineq" and lam < -1e-7:
+                    ok = False
+                    break
+
+            if ok:
+                candidates.append((i, j, abs(det)))
+
+    # Special case: zero objective. Any nonsingular active pair is valid.
+    if not candidates and np.linalg.norm(target) <= tol:
+        for p in range(len(active)):
+            for q in range(p + 1, len(active)):
+                i = active[p]
+                j = active[q]
+                B = np.vstack([rows[i]["n"], rows[j]["n"]])
+                det = float(np.linalg.det(B))
+                if abs(det) > tol:
+                    candidates.append((i, j, abs(det)))
+
+    return candidates
+
+
+def _rhs_delta_interval_for_basis(rows, constraints, basis, target_i, x_opt, y_opt, tol=1e-9):
+    """Allowable RHS delta interval for one constraint under one optimal basis."""
+    point = np.array([float(x_opt), float(y_opt)])
+    b0, b1, _ = basis
+    basis_rows = (b0, b1)
+    B = np.vstack([rows[b0]["n"], rows[b1]["n"]])
+
+    target_basis_pos = None
+    for pos, row_idx in enumerate(basis_rows):
+        if rows[row_idx]["source"] == target_i:
+            target_basis_pos = pos
+            break
+
+    a, b, operator, rhs = constraints[target_i]
+
+    # If the target row is nonbasic, the optimum does not move until
+    # the row reaches the current solution.
+    if target_basis_pos is None:
+        lhs = float(a * x_opt + b * y_opt)
+        if operator == "<=":
+            return lhs - float(rhs), np.inf
+        if operator == ">=":
+            return -np.inf, lhs - float(rhs)
+        return lhs - float(rhs), lhs - float(rhs)
+
+    factor = rows[basis_rows[target_basis_pos]]["rhs_factor"]
+    e = np.zeros(2)
+    e[target_basis_pos] = factor
+
+    try:
+        direction = np.linalg.solve(B, e)
+    except np.linalg.LinAlgError:
+        return None
+
+    delta_lo = -np.inf
+    delta_hi = np.inf
+
+    for row_idx, row in enumerate(rows):
+        # The changing basic row is satisfied identically by construction.
+        if row["source"] == target_i:
+            continue
+
+        q = float(np.dot(row["n"], direction))
+        activity = float(np.dot(row["n"], point))
+
+        if row["kind"] == "ineq":
+            slack = float(row["r"] - activity)
+            if slack < 0 and abs(slack) <= 1e-7:
+                slack = 0.0
+
+            if q > tol:
+                delta_hi = min(delta_hi, slack / q)
+            elif q < -tol:
+                delta_lo = max(delta_lo, slack / q)
+            elif slack < -1e-7:
+                return None
+        else:
+            # An unchanged equality must continue to hold.
+            if abs(q) > tol:
+                delta_lo = max(delta_lo, 0.0)
+                delta_hi = min(delta_hi, 0.0)
+
+    if abs(delta_lo) < 1e-10:
+        delta_lo = 0.0
+    if abs(delta_hi) < 1e-10:
+        delta_hi = 0.0
+
+    if delta_lo > delta_hi + 1e-8:
+        return None
+
+    return delta_lo, delta_hi
+
+
+def rhs_sensitivity_ranges(constraints, x_opt, y_opt, c1, c2, problem_type):
+    """
+    Compute one-at-a-time RHS ranges for a 2-variable continuous LP.
+
+    The interval reported is the range of each RHS for which an optimal
+    basis compatible with the current solution remains primal and dual feasible.
+    """
+    rows = _canonical_rhs_rows(constraints)
+    bases = _dual_feasible_bases(rows, x_opt, y_opt, c1, c2, problem_type)
+
+    if not bases:
+        return None
+
+    results = []
+
+    for i, (a, b, operator, rhs) in enumerate(constraints):
+        candidate_intervals = []
+
+        # Prefer bases containing the target constraint, because this gives
+        # the usual textbook RHS sensitivity range for a binding row.
+        containing = [
+            basis for basis in bases
+            if rows[basis[0]]["source"] == i or rows[basis[1]]["source"] == i
+        ]
+        bases_to_test = containing if containing else bases
+
+        for basis in bases_to_test:
+            interval = _rhs_delta_interval_for_basis(
+                rows, constraints, basis, i, x_opt, y_opt
+            )
+            if interval is None:
+                continue
+
+            lo, hi = interval
+            if lo <= 1e-8 and hi >= -1e-8:
+                # Score wider intervals higher; infinite sides dominate.
+                left = np.inf if np.isneginf(lo) else max(0.0, -lo)
+                right = np.inf if np.isposinf(hi) else max(0.0, hi)
+                score = (
+                    int(np.isinf(left)) + int(np.isinf(right)),
+                    (0.0 if np.isinf(left) else left) + (0.0 if np.isinf(right) else right),
+                    basis[2],
+                )
+                candidate_intervals.append((score, lo, hi))
+
+        if not candidate_intervals:
+            results.append(None)
+            continue
+
+        candidate_intervals.sort(key=lambda t: t[0], reverse=True)
+        _, delta_lo, delta_hi = candidate_intervals[0]
+
+        rhs_value = float(rhs)
+        rhs_min = -np.inf if np.isneginf(delta_lo) else rhs_value + delta_lo
+        rhs_max = np.inf if np.isposinf(delta_hi) else rhs_value + delta_hi
+        allowable_decrease = np.inf if np.isneginf(delta_lo) else max(0.0, -delta_lo)
+        allowable_increase = np.inf if np.isposinf(delta_hi) else max(0.0, delta_hi)
+
+        results.append({
+            "rhs_current": rhs_value,
+            "rhs_min": rhs_min,
+            "rhs_max": rhs_max,
+            "allowable_decrease": allowable_decrease,
+            "allowable_increase": allowable_increase,
+        })
+
+    return results
+
 # =================== BUILD AND SOLVE MODEL ===================
 def build_and_solve_model(c1, c2, constraints, problem_type, x_type, y_type):
     m = pyo.ConcreteModel()
@@ -423,8 +671,12 @@ if st.button("Solve and plot"):
 
         if continuous_dual:
             ranges = coefficient_ranges(vertices, x_opt, y_opt, c1, c2, problem_type)
+            rhs_ranges = rhs_sensitivity_ranges(
+                constraints, x_opt, y_opt, c1, c2, problem_type
+            )
         else:
             ranges = None
+            rhs_ranges = None
 
         st.session_state["model_solved"] = True
         st.session_state["solver_status"] = status
@@ -437,6 +689,7 @@ if st.button("Solve and plot"):
         st.session_state["duals"] = duals
         st.session_state["vertices"] = vertices
         st.session_state["coefficient_ranges_result"] = ranges
+        st.session_state["rhs_ranges_result"] = rhs_ranges
         st.session_state["problem_type_value"] = problem_type
         st.session_state["x_type_value"] = x_type
         st.session_state["y_type_value"] = y_type
@@ -571,6 +824,71 @@ if st.session_state.get("model_solved", False):
         st.table(dual_table)
     else:
         st.info("No shadow prices are available.")
+
+    # -------- RHS ranges --------
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.subheader("Constraint RHS Sensitivity")
+
+    x_type_value = st.session_state["x_type_value"]
+    y_type_value = st.session_state["y_type_value"]
+    rhs_ranges = st.session_state.get("rhs_ranges_result", None)
+
+    def format_sensitivity_value(v):
+        if v is None:
+            return "N/A"
+        if np.isneginf(v):
+            return "-∞"
+        if np.isposinf(v):
+            return "+∞"
+        return f"{v:.4f}"
+
+    if not (x_type_value == "Nonnegative Real" and y_type_value == "Nonnegative Real"):
+        st.info("RHS sensitivity analysis is available only for continuous LP models.")
+    elif rhs_ranges is None:
+        st.info("The RHS sensitivity ranges could not be calculated for this solution.")
+    else:
+        rhs_table = {
+            "Constraint": [],
+            "Current RHS": [],
+            "Minimum RHS": [],
+            "Maximum RHS": [],
+            "Allowable decrease": [],
+            "Allowable increase": [],
+            "Shadow price": [],
+        }
+
+        for i, (a_i, b_i, operator_i, rhs_i) in enumerate(constraints):
+            equation_i = equation_text(a_i, b_i, operator_i, rhs_i)
+            rr = rhs_ranges[i] if i < len(rhs_ranges) else None
+
+            rhs_table["Constraint"].append(equation_i)
+            rhs_table["Current RHS"].append(f"{rhs_i:.4f}")
+
+            if rr is None:
+                rhs_table["Minimum RHS"].append("N/A")
+                rhs_table["Maximum RHS"].append("N/A")
+                rhs_table["Allowable decrease"].append("N/A")
+                rhs_table["Allowable increase"].append("N/A")
+            else:
+                rhs_table["Minimum RHS"].append(format_sensitivity_value(rr["rhs_min"]))
+                rhs_table["Maximum RHS"].append(format_sensitivity_value(rr["rhs_max"]))
+                rhs_table["Allowable decrease"].append(
+                    format_sensitivity_value(rr["allowable_decrease"])
+                )
+                rhs_table["Allowable increase"].append(
+                    format_sensitivity_value(rr["allowable_increase"])
+                )
+
+            dual_value = duals[i][1] if i < len(duals) else "N/A"
+            if isinstance(dual_value, (int, float, np.integer, np.floating)):
+                dual_value = f"{float(dual_value):.4f}"
+            rhs_table["Shadow price"].append(dual_value)
+
+        st.table(rhs_table)
+        st.caption(
+            "Minimum/maximum RHS values are one-at-a-time sensitivity limits: "
+            "inside this interval, an optimal basis compatible with the current solution remains valid."
+        )
 
     # -------- Coefficient ranges --------
     st.markdown("<hr>", unsafe_allow_html=True)
