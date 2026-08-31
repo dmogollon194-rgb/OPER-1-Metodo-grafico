@@ -608,4 +608,4 @@ if st.session_state.get("model_solved", False):
         st.table(sensitivity_table)
 
 # Close main container
-st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True) 
