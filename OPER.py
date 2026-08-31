@@ -3,7 +3,7 @@ import pyomo.environ as pyo
 import numpy as np
 import plotly.graph_objects as go
 
-# =================== MARCA DE AGUA ===================
+# =================== WATERMARK ===================
 watermark = """
 <style>
 .watermark {
@@ -22,7 +22,7 @@ watermark = """
 """
 st.markdown(watermark, unsafe_allow_html=True)
 
-# =================== CSS ESTÉTICO GLOBAL ===================
+# =================== GLOBAL UI STYLES ===================
 css = """
 <style>
 section[data-testid="stSidebar"] {
@@ -72,77 +72,77 @@ hr {
 """
 st.markdown(css, unsafe_allow_html=True)
 
-# Contenedor principal estilizado
+# Styled main container
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
-# =================== INICIALIZAR SESSION STATE ===================
-if "expander_abierto" not in st.session_state:
-    st.session_state["expander_abierto"] = None
+# =================== INITIALIZE SESSION STATE ===================
+if "open_expander" not in st.session_state:
+    st.session_state["open_expander"] = None
 
-# =================== AUX: DOMINIO SEGÚN NATURALEZA ===================
-def obtener_dominio(tipo):
-    if tipo == "Real ≥ 0":
+# =================== HELPER: VARIABLE DOMAIN ===================
+def get_domain(tipo):
+    if tipo == "Nonnegative Real":
         return pyo.NonNegativeReals
-    elif tipo == "Entera ≥ 0":
+    elif tipo == "Nonnegative Integer":
         return pyo.NonNegativeIntegers
-    elif tipo == "Binaria":
+    elif tipo == "Binary":
         return pyo.Binary
 
-# =================== AUX: FORMATO ECUACIONES ===================
+# =================== HELPER: EQUATION objective functionRMATTING ===================
 def fmt_num(v):
     if abs(v - round(v)) < 1e-9:
         return str(int(round(v)))
     return f"{v:.2f}"
 
-def ecuacion_texto(a, b, sentido, rhs):
-    return f"{fmt_num(a)}x + {fmt_num(b)}y {sentido} {fmt_num(rhs)}"
+def equation_text(a, b, operator, rhs):
+    return f"{fmt_num(a)}x + {fmt_num(b)}y {operator} {fmt_num(rhs)}"
 
-# =================== FACTIBILIDAD PUNTO ===================
-def es_factible_punto(x, y, restricciones, tipo_x, tipo_y, tol=1e-7):
-    if tipo_x in ["Real ≥ 0", "Entera ≥ 0"] and x < -tol:
+# =================== POINT FEASIBILITY ===================
+def is_feasible_point(x, y, constraints, x_type, y_type, tol=1e-7):
+    if x_type in ["Nonnegative Real", "Nonnegative Integer"] and x < -tol:
         return False
-    if tipo_y in ["Real ≥ 0", "Entera ≥ 0"] and y < -tol:
-        return False
-
-    if tipo_x == "Binaria" and not (-tol <= x <= 1 + tol):
-        return False
-    if tipo_y == "Binaria" and not (-tol <= y <= 1 + tol):
+    if y_type in ["Nonnegative Real", "Nonnegative Integer"] and y < -tol:
         return False
 
-    for (a, b, sentido, rhs) in restricciones:
+    if x_type == "Binary" and not (-tol <= x <= 1 + tol):
+        return False
+    if y_type == "Binary" and not (-tol <= y <= 1 + tol):
+        return False
+
+    for (a, b, operator, rhs) in constraints:
         val = a * x + b * y
-        if sentido == "<=" and val > rhs + tol:
+        if operator == "<=" and val > rhs + tol:
             return False
-        elif sentido == ">=" and val < rhs - tol:
+        elif operator == ">=" and val < rhs - tol:
             return False
-        elif sentido == "=" and abs(val - rhs) > tol:
+        elif operator == "=" and abs(val - rhs) > tol:
             return False
 
     return True
 
-# =================== ENUMERAR VÉRTICES ===================
-def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
-    todas = list(restricciones)
+# =================== ENUMERATE VERTICES ===================
+def enumerate_vertices(constraints, x_type, y_type, tol=1e-7):
+    all_constraints = list(constraints)
 
-    if tipo_x in ["Real ≥ 0", "Entera ≥ 0"]:
-        todas.append((1.0, 0.0, ">=", 0.0))
-    if tipo_y in ["Real ≥ 0", "Entera ≥ 0"]:
-        todas.append((0.0, 1.0, ">=", 0.0))
+    if x_type in ["Nonnegative Real", "Nonnegative Integer"]:
+        all_constraints.append((1.0, 0.0, ">=", 0.0))
+    if y_type in ["Nonnegative Real", "Nonnegative Integer"]:
+        all_constraints.append((0.0, 1.0, ">=", 0.0))
 
-    if tipo_x == "Binaria":
-        todas.append((1.0, 0.0, ">=", 0.0))
-        todas.append((1.0, 0.0, "<=", 1.0))
-    if tipo_y == "Binaria":
-        todas.append((0.0, 1.0, ">=", 0.0))
-        todas.append((0.0, 1.0, "<=", 1.0))
+    if x_type == "Binary":
+        all_constraints.append((1.0, 0.0, ">=", 0.0))
+        all_constraints.append((1.0, 0.0, "<=", 1.0))
+    if y_type == "Binary":
+        all_constraints.append((0.0, 1.0, ">=", 0.0))
+        all_constraints.append((0.0, 1.0, "<=", 1.0))
 
     vertices = []
-    n = len(todas)
+    n = len(all_constraints)
 
     for i in range(n):
-        a1, b1, _, rhs1 = todas[i]
+        a1, b1, _, rhs1 = all_constraints[i]
         for j in range(i + 1, n):
-            a2, b2, _, rhs2 = todas[j]
+            a2, b2, _, rhs2 = all_constraints[j]
             det = a1 * b2 - a2 * b1
 
             if abs(det) < tol:
@@ -151,7 +151,7 @@ def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
             x = (rhs1 * b2 - rhs2 * b1) / det
             y = (a1 * rhs2 - a2 * rhs1) / det
 
-            if es_factible_punto(x, y, restricciones, tipo_x, tipo_y, tol):
+            if is_feasible_point(x, y, constraints, x_type, y_type, tol):
                 vertices.append((x, y))
 
     uniq = {}
@@ -161,8 +161,8 @@ def enumerar_vertices(restricciones, tipo_x, tipo_y, tol=1e-7):
 
     return list(uniq.values())
 
-# =================== ORDENAR VÉRTICES ===================
-def ordenar_vertices(vertices):
+# =================== SORT VERTICES ===================
+def sort_vertices(vertices):
     if len(vertices) <= 2:
         return vertices
 
@@ -172,33 +172,33 @@ def ordenar_vertices(vertices):
     cx = np.mean(xs)
     cy = np.mean(ys)
 
-    angulos = np.arctan2(ys - cy, xs - cx)
-    orden = np.argsort(angulos)
+    angles = np.arctan2(ys - cy, xs - cx)
+    order = np.argsort(angles)
 
-    return [vertices[i] for i in orden]
+    return [vertices[i] for i in order]
 
-# =================== RANGOS DE COEFICIENTES FO ===================
-def rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema):
+# =================== OBJECTIVE COEFFICIENT RANGES ===================
+def coefficient_ranges(vertices, x_opt, y_opt, c1, c2, problem_type):
     if len(vertices) == 0:
         return None
 
-    otros = []
+    other_vertices = []
     for vx, vy in vertices:
         if abs(vx - x_opt) > 1e-6 or abs(vy - y_opt) > 1e-6:
-            otros.append((vx, vy))
+            other_vertices.append((vx, vy))
 
-    if len(otros) == 0:
+    if len(other_vertices) == 0:
         return {"c1": (-np.inf, np.inf), "c2": (-np.inf, np.inf)}
 
     c1_min, c1_max = -np.inf, np.inf
     c2_min, c2_max = -np.inf, np.inf
-    minimiza = (tipo_problema == "Minimizar")
+    is_minimization = (problem_type == "Minimize")
 
-    for (vx, vy) in otros:
+    for (vx, vy) in other_vertices:
         dx = x_opt - vx
         dy = y_opt - vy
 
-        if minimiza:
+        if is_minimization:
             if abs(dx) > 1e-9:
                 bound = -c2 * dy / dx
                 if dx > 0:
@@ -229,238 +229,238 @@ def rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema):
 
     return {"c1": (c1_min, c1_max), "c2": (c2_min, c2_max)}
 
-# =================== CONSTRUIR Y RESOLVER MODELO ===================
-def construir_y_resolver_modelo(c1, c2, restricciones, tipo_problema, tipo_x, tipo_y):
+# =================== BUILD AND SOLVE MODEL ===================
+def build_and_solve_model(c1, c2, constraints, problem_type, x_type, y_type):
     m = pyo.ConcreteModel()
 
-    dual_continuo = (tipo_x == "Real ≥ 0" and tipo_y == "Real ≥ 0")
-    if dual_continuo:
+    continuous_dual = (x_type == "Nonnegative Real" and y_type == "Nonnegative Real")
+    if continuous_dual:
         m.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
-    m.x = pyo.Var(domain=obtener_dominio(tipo_x))
-    m.y = pyo.Var(domain=obtener_dominio(tipo_y))
+    m.x = pyo.Var(domain=get_domain(x_type))
+    m.y = pyo.Var(domain=get_domain(y_type))
 
-    if tipo_problema == "Minimizar":
+    if problem_type == "Minimize":
         m.obj = pyo.Objective(expr=c1 * m.x + c2 * m.y, sense=pyo.minimize)
     else:
         m.obj = pyo.Objective(expr=c1 * m.x + c2 * m.y, sense=pyo.maximize)
 
     m.cons = pyo.ConstraintList()
-    for (a, b, sentido, rhs) in restricciones:
-        if sentido == "<=":
+    for (a, b, operator, rhs) in constraints:
+        if operator == "<=":
             m.cons.add(a * m.x + b * m.y <= rhs)
-        elif sentido == ">=":
+        elif operator == ">=":
             m.cons.add(a * m.x + b * m.y >= rhs)
         else:
             m.cons.add(a * m.x + b * m.y == rhs)
 
     solver = pyo.SolverFactory("appsi_highs")
-    resultado = solver.solve(m, load_solutions=True)
+    result = solver.solve(m, load_solutions=True)
 
-    return m, resultado
+    return m, result
 
-# =================== CALLBACKS PARA MANTENER EXPANDER ABIERTO ===================
-def abrir_expander(k):
-    st.session_state["expander_abierto"] = k
+# =================== CALLBACKS TO KEEP EXPANDER OPEN ===================
+def keep_expander_open(k):
+    st.session_state["open_expander"] = k
 
 # =================== SIDEBAR ===================
-st.sidebar.title("Configuración")
+st.sidebar.title("Configuration")
 
-tipo_problema = st.sidebar.selectbox(
-    "Tipo de problema",
-    ["Minimizar", "Maximizar"],
-    key="tipo_problema_widget"
+problem_type = st.sidebar.selectbox(
+    "Problem type",
+    ["Minimize", "Maximize"],
+    key="problem_type_widget"
 )
 
 n_restr = st.sidebar.number_input(
-    "Número de restricciones",
+    "Number of constraints",
     min_value=1,
     max_value=20,
     value=2,
     step=1,
-    key="n_restr_widget"
+    key="n_constraints_widget"
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("Solución óptima")
+st.sidebar.subheader("Optimal solution")
 
-if st.session_state.get("modelo_resuelto", False):
-    st.sidebar.write(f"Estado solver: {st.session_state.get('solver_status', '')}")
+if st.session_state.get("model_solved", False):
+    st.sidebar.write(f"Solver status: {st.session_state.get('solver_status', '')}")
     st.sidebar.write(f"x* = {st.session_state['x_opt']:.4f}")
     st.sidebar.write(f"y* = {st.session_state['y_opt']:.4f}")
     st.sidebar.write(f"Z* = {st.session_state['z_opt']:.4f}")
 else:
-    st.sidebar.info("Resuelve el modelo para ver la solución aquí.")
+    st.sidebar.info("Solve the model to view the solution here.")
 
-# =================== CUERPO PRINCIPAL ===================
-st.markdown("<h2>Método gráfico</h2>", unsafe_allow_html=True)
+# =================== MAIN CONTENT ===================
+st.markdown("<h2>Graphical Method</h2>", unsafe_allow_html=True)
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# Naturaleza de las variables
-st.subheader("Naturaleza de las variables")
+# Variable domains
+st.subheader("Variable Domains")
 col1, col2 = st.columns(2)
 
 with col1:
-    tipo_x = st.selectbox(
-        "Naturaleza de X",
-        ["Real ≥ 0", "Entera ≥ 0", "Binaria"],
-        key="tipo_x_widget"
+    x_type = st.selectbox(
+        "Domain of X",
+        ["Nonnegative Real", "Nonnegative Integer", "Binary"],
+        key="x_type_widget"
     )
 
 with col2:
-    tipo_y = st.selectbox(
-        "Naturaleza de Y",
-        ["Real ≥ 0", "Entera ≥ 0", "Binaria"],
-        key="tipo_y_widget"
+    y_type = st.selectbox(
+        "Domain of Y",
+        ["Nonnegative Real", "Nonnegative Integer", "Binary"],
+        key="y_type_widget"
     )
 
-# Función objetivo
-st.subheader("Función objetivo")
+# Objective function
+st.subheader("Objective Function")
 col_fo_inputs, col_fo_latex = st.columns([2, 3])
 
 with col_fo_inputs:
-    c1 = st.number_input("Coeficiente de X", value=3.0, key="c1_widget")
-    c2 = st.number_input("Coeficiente de Y", value=5.0, key="c2_widget")
+    c1 = st.number_input("Coefficient of X", value=3.0, key="c1_widget")
+    c2 = st.number_input("Coefficient of Y", value=5.0, key="c2_widget")
 
-sentido_tex = r"\min" if tipo_problema == "Minimizar" else r"\max"
-st.latex(rf"{sentido_tex}\ Z = {c1}x + {c2}y")
+sense_tex = r"\min" if problem_type == "Minimize" else r"\max"
+st.latex(rf"{sense_tex}\ Z = {c1}x + {c2}y")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
-# =================== RESTRICCIONES ===================
-st.subheader("Restricciones")
-restricciones = []
+# =================== CONSTRAINTS ===================
+st.subheader("Constraints")
+constraints = []
 
 for k in range(int(n_restr)):
     a_preview = st.session_state.get(f"a{k}_widget", 1.0)
     b_preview = st.session_state.get(f"b{k}_widget", 1.0)
-    sentido_preview = st.session_state.get(f"sent{k}_widget", "<=")
+    operator_preview = st.session_state.get(f"sent{k}_widget", "<=")
     rhs_preview = st.session_state.get(f"rhs{k}_widget", 8.0)
 
-    titulo = f"Restricción {k+1}: {ecuacion_texto(a_preview, b_preview, sentido_preview, rhs_preview)}"
+    title = f"Constraint {k+1}: {equation_text(a_preview, b_preview, operator_preview, rhs_preview)}"
 
-    expanded_now = (st.session_state.get("expander_abierto") == k)
+    expanded_now = (st.session_state.get("open_expander") == k)
 
-    with st.expander(titulo, expanded=expanded_now):
+    with st.expander(title, expanded=expanded_now):
         col_a, col_b, col_sent, col_rhs = st.columns(4)
 
         with col_a:
             a = st.number_input(
-                f"Coeficiente de X en R{k+1}",
+                f"X coefficient in C{k+1}",
                 value=float(a_preview),
                 key=f"a{k}_widget",
-                on_change=abrir_expander,
+                on_change=keep_expander_open,
                 args=(k,)
             )
 
         with col_b:
             b = st.number_input(
-                f"Coeficiente de Y en R{k+1}",
+                f"Y coefficient in C{k+1}",
                 value=float(b_preview),
                 key=f"b{k}_widget",
-                on_change=abrir_expander,
+                on_change=keep_expander_open,
                 args=(k,)
             )
 
         with col_sent:
-            opciones = ["<=", ">=", "="]
-            idx = opciones.index(sentido_preview) if sentido_preview in opciones else 0
-            sentido = st.selectbox(
-                f"Sentido en R{k+1}",
-                opciones,
+            options = ["<=", ">=", "="]
+            idx = options.index(operator_preview) if operator_preview in options else 0
+            operator = st.selectbox(
+                f"Operator in C{k+1}",
+                options,
                 index=idx,
                 key=f"sent{k}_widget",
-                on_change=abrir_expander,
+                on_change=keep_expander_open,
                 args=(k,)
             )
 
         with col_rhs:
             rhs = st.number_input(
-                f"LD en R{k+1}",
+                f"RHS in C{k+1}",
                 value=float(rhs_preview),
                 key=f"rhs{k}_widget",
-                on_change=abrir_expander,
+                on_change=keep_expander_open,
                 args=(k,)
             )
 
-        st.latex(rf"{a}x + {b}y\ {sentido}\ {rhs}")
+        st.latex(rf"{a}x + {b}y\ {operator}\ {rhs}")
 
-    a_actual = st.session_state.get(f"a{k}_widget", 1.0)
-    b_actual = st.session_state.get(f"b{k}_widget", 1.0)
-    sentido_actual = st.session_state.get(f"sent{k}_widget", "<=")
-    rhs_actual = st.session_state.get(f"rhs{k}_widget", 8.0)
+    a_current = st.session_state.get(f"a{k}_widget", 1.0)
+    b_current = st.session_state.get(f"b{k}_widget", 1.0)
+    operator_current = st.session_state.get(f"sent{k}_widget", "<=")
+    rhs_current = st.session_state.get(f"rhs{k}_widget", 8.0)
 
-    restricciones.append((a_actual, b_actual, sentido_actual, rhs_actual))
+    constraints.append((a_current, b_current, operator_current, rhs_current))
 
-# =================== BOTÓN: RESOLVER Y GUARDAR ===================
-if st.button("Resolver y graficar"):
+# =================== BUTTON: SOLVE AND STORE ===================
+if st.button("Solve and plot"):
     try:
-        modelo, resultado = construir_y_resolver_modelo(
-            c1, c2, restricciones, tipo_problema, tipo_x, tipo_y
+        model, result = build_and_solve_model(
+            c1, c2, constraints, problem_type, x_type, y_type
         )
 
-        x_opt = pyo.value(modelo.x)
-        y_opt = pyo.value(modelo.y)
-        z_opt = pyo.value(modelo.obj)
-        status = str(resultado.solver.termination_condition)
+        x_opt = pyo.value(model.x)
+        y_opt = pyo.value(model.y)
+        z_opt = pyo.value(model.obj)
+        status = str(result.solver.termination_condition)
 
-        duales = []
-        dual_continuo = (tipo_x == "Real ≥ 0" and tipo_y == "Real ≥ 0")
+        duals = []
+        continuous_dual = (x_type == "Nonnegative Real" and y_type == "Nonnegative Real")
 
-        if dual_continuo:
-            for i, cons in enumerate(modelo.cons.values(), start=1):
-                a_i, b_i, sentido_i, rhs_i = restricciones[i - 1]
-                ecuacion_i = ecuacion_texto(a_i, b_i, sentido_i, rhs_i)
-                dual_val = modelo.dual.get(cons, 0)
-                duales.append([ecuacion_i, dual_val])
+        if continuous_dual:
+            for i, cons in enumerate(model.cons.values(), start=1):
+                a_i, b_i, operator_i, rhs_i = constraints[i - 1]
+                equation_i = equation_text(a_i, b_i, operator_i, rhs_i)
+                dual_value = model.dual.get(cons, 0)
+                duals.append([equation_i, dual_value])
         else:
-            for i in range(len(restricciones)):
-                a_i, b_i, sentido_i, rhs_i = restricciones[i]
-                ecuacion_i = ecuacion_texto(a_i, b_i, sentido_i, rhs_i)
-                duales.append([ecuacion_i, "No disponible (modelo entero/binario)"])
+            for i in range(len(constraints)):
+                a_i, b_i, operator_i, rhs_i = constraints[i]
+                equation_i = equation_text(a_i, b_i, operator_i, rhs_i)
+                duals.append([equation_i, "Not available (integer/binary model)"])
 
-        vertices = enumerar_vertices(restricciones, tipo_x, tipo_y)
+        vertices = enumerate_vertices(constraints, x_type, y_type)
 
-        if dual_continuo:
-            rangos = rangos_coeficientes(vertices, x_opt, y_opt, c1, c2, tipo_problema)
+        if continuous_dual:
+            ranges = coefficient_ranges(vertices, x_opt, y_opt, c1, c2, problem_type)
         else:
-            rangos = None
+            ranges = None
 
-        st.session_state["modelo_resuelto"] = True
+        st.session_state["model_solved"] = True
         st.session_state["solver_status"] = status
         st.session_state["x_opt"] = x_opt
         st.session_state["y_opt"] = y_opt
         st.session_state["z_opt"] = z_opt
-        st.session_state["restricciones"] = restricciones
+        st.session_state["constraints"] = constraints
         st.session_state["c1"] = c1
         st.session_state["c2"] = c2
-        st.session_state["duales"] = duales
+        st.session_state["duals"] = duals
         st.session_state["vertices"] = vertices
-        st.session_state["rangos_coef"] = rangos
-        st.session_state["tipo_problema_val"] = tipo_problema
-        st.session_state["tipo_x_val"] = tipo_x
-        st.session_state["tipo_y_val"] = tipo_y
+        st.session_state["coefficient_ranges_result"] = ranges
+        st.session_state["problem_type_value"] = problem_type
+        st.session_state["x_type_value"] = x_type
+        st.session_state["y_type_value"] = y_type
 
     except Exception as e:
-        st.error(f"Error al resolver el modelo: {e}")
+        st.error(f"Error solving the model: {e}")
 
-# =================== MOSTRAR GRÁFICA Y ANÁLISIS ===================
-if st.session_state.get("modelo_resuelto", False):
-    restricciones = st.session_state["restricciones"]
+# =================== DISPLAY GRAPH AND ANALYSIS ===================
+if st.session_state.get("model_solved", False):
+    constraints = st.session_state["constraints"]
     x_opt = st.session_state["x_opt"]
     y_opt = st.session_state["y_opt"]
-    c1_res = st.session_state["c1"]
-    c2_res = st.session_state["c2"]
+    c1_result = st.session_state["c1"]
+    c2_result = st.session_state["c2"]
     vertices = st.session_state.get("vertices", [])
 
     st.markdown("<hr>", unsafe_allow_html=True)
-    st.subheader("Gráfica de la región factible")
+    st.subheader("Feasible Region Plot")
 
-    candidatos_x = [x_opt] + [v[0] for v in vertices] if vertices else [x_opt]
-    candidatos_y = [y_opt] + [v[1] for v in vertices] if vertices else [y_opt]
+    x_candidates = [x_opt] + [v[0] for v in vertices] if vertices else [x_opt]
+    y_candidates = [y_opt] + [v[1] for v in vertices] if vertices else [y_opt]
 
-    max_x = max(candidatos_x + [10])
-    max_y = max(candidatos_y + [10])
+    max_x = max(x_candidates + [10])
+    max_y = max(y_candidates + [10])
     lim = 1.25 * max(max_x, max_y)
 
     X = np.linspace(0, lim, 400)
@@ -468,9 +468,9 @@ if st.session_state.get("modelo_resuelto", False):
     fig = go.Figure()
 
     if len(vertices) >= 3:
-        vertices_ordenados = ordenar_vertices(vertices)
-        x_poly = [v[0] for v in vertices_ordenados] + [vertices_ordenados[0][0]]
-        y_poly = [v[1] for v in vertices_ordenados] + [vertices_ordenados[0][1]]
+        sorted_vertices = sort_vertices(vertices)
+        x_poly = [v[0] for v in sorted_vertices] + [sorted_vertices[0][0]]
+        y_poly = [v[1] for v in sorted_vertices] + [sorted_vertices[0][1]]
 
         fig.add_trace(go.Scatter(
             x=x_poly,
@@ -479,17 +479,17 @@ if st.session_state.get("modelo_resuelto", False):
             fill="toself",
             fillcolor="rgba(0,150,255,0.25)",
             line=dict(color="rgba(0,150,255,0.9)", width=2),
-            name="Región factible"
+            name="Feasible region"
         ))
 
-    for (a, b, s, rhs) in restricciones:
+    for (a, b, s, rhs) in constraints:
         if abs(b) > 1e-8:
             y_line = (rhs - a * X) / b
             fig.add_trace(go.Scatter(
                 x=X,
                 y=y_line,
                 mode="lines",
-                name=ecuacion_texto(a, b, s, rhs)
+                name=equation_text(a, b, s, rhs)
             ))
         else:
             if abs(a) > 1e-8:
@@ -498,37 +498,37 @@ if st.session_state.get("modelo_resuelto", False):
                     x=[x_line, x_line],
                     y=[0, lim],
                     mode="lines",
-                    name=ecuacion_texto(a, 0, s, rhs)
+                    name=equation_text(a, 0, s, rhs)
                 ))
 
     fig.add_trace(go.Scatter(
         x=[x_opt],
         y=[y_opt],
         mode="markers+text",
-        text=["Óptimo"],
+        text=["Optimum"],
         textposition="top right",
         marker=dict(size=10, color="red"),
-        name="Solución óptima"
+        name="Optimal solution"
     ))
 
-    if abs(c2_res) > 1e-8:
-        z_opt_line = c1_res * x_opt + c2_res * y_opt
-        y_obj = (z_opt_line - c1_res * X) / c2_res
+    if abs(c2_result) > 1e-8:
+        z_opt_line = c1_result * x_opt + c2_result * y_opt
+        y_obj = (z_opt_line - c1_result * X) / c2_result
         fig.add_trace(go.Scatter(
             x=X,
             y=y_obj,
             mode="lines",
             line=dict(dash="dash", color="red"),
-            name="FO en Z*"
+            name="Objective function at Z*"
         ))
-    elif abs(c1_res) > 1e-8:
-        x_line = (c1_res * x_opt + c2_res * y_opt) / c1_res
+    elif abs(c1_result) > 1e-8:
+        x_line = (c1_result * x_opt + c2_result * y_opt) / c1_result
         fig.add_trace(go.Scatter(
             x=[x_line, x_line],
             y=[0, lim],
             mode="lines",
             line=dict(dash="dash", color="red"),
-            name="FO en Z*"
+            name="Objective function at Z*"
         ))
 
     if len(vertices) >= 1:
@@ -549,7 +549,7 @@ if st.session_state.get("modelo_resuelto", False):
     fig.update_layout(
         width=850,
         height=600,
-        title="Región factible y solución óptima",
+        title="Feasible Region and Optimal Solution",
         xaxis_title="x",
         yaxis_title="y",
         legend=dict(x=0.68, y=1.0)
@@ -557,37 +557,37 @@ if st.session_state.get("modelo_resuelto", False):
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # -------- Precios sombra --------
+    # -------- Shadow prices --------
     st.markdown("<hr>", unsafe_allow_html=True)
-    st.subheader("Precios sombra")
+    st.subheader("Shadow Prices")
 
-    duales = st.session_state.get("duales", [])
+    duals = st.session_state.get("duals", [])
 
-    if isinstance(duales, list) and len(duales) > 0:
-        tabla_duales = {
-            "Restricción": [row[0] for row in duales],
-            "Precio sombra (Dual)": [row[1] for row in duales],
+    if isinstance(duals, list) and len(duals) > 0:
+        dual_table = {
+            "Constraint": [row[0] for row in duals],
+            "Shadow price (Dual)": [row[1] for row in duals],
         }
-        st.table(tabla_duales)
+        st.table(dual_table)
     else:
-        st.info("No hay precios sombra disponibles.")
+        st.info("No shadow prices are available.")
 
-    # -------- Rangos de coeficientes --------
+    # -------- Coefficient ranges --------
     st.markdown("<hr>", unsafe_allow_html=True)
-    st.subheader("Coeficientes de FO")
+    st.subheader("Objective Function Coefficients")
 
-    tipo_x_val = st.session_state["tipo_x_val"]
-    tipo_y_val = st.session_state["tipo_y_val"]
-    rangos = st.session_state.get("rangos_coef", None)
+    x_type_value = st.session_state["x_type_value"]
+    y_type_value = st.session_state["y_type_value"]
+    ranges = st.session_state.get("coefficient_ranges_result", None)
 
-    if not (tipo_x_val == "Real ≥ 0" and tipo_y_val == "Real ≥ 0"):
+    if not (x_type_value == "Nonnegative Real" and y_type_value == "Nonnegative Real"):
         st.info(
-            "Análisis no permitido"
+            "Analysis not available for integer or binary models."
         )
-    elif rangos is None:
-        st.info("No se pudieron calcular los rangos de los coeficientes.")
+    elif ranges is None:
+        st.info("The coefficient ranges could not be calculated.")
     else:
-        def formato_intervalo(lo, hi):
+        def format_interval(lo, hi):
             def fmt(v):
                 if np.isneginf(v):
                     return "-∞"
@@ -596,16 +596,16 @@ if st.session_state.get("modelo_resuelto", False):
                 return f"{v:.4f}"
             return fmt(lo), fmt(hi)
 
-        c1_lo, c1_hi = formato_intervalo(*rangos["c1"])
-        c2_lo, c2_hi = formato_intervalo(*rangos["c2"])
+        c1_lo, c1_hi = format_interval(*ranges["c1"])
+        c2_lo, c2_hi = format_interval(*ranges["c2"])
 
-        tabla_sens = {
-            "Coeficiente": ["c1 (coef. de x)", "c2 (coef. de y)"],
-            "Valor actual": [f"{c1_res:.4f}", f"{c2_res:.4f}"],
-            "Límite inferior": [c1_lo, c2_lo],
-            "Límite superior": [c1_hi, c2_hi],
+        sensitivity_table = {
+            "Coefficient": ["c1 (coefficient of x)", "c2 (coefficient of y)"],
+            "Current value": [f"{c1_result:.4f}", f"{c2_result:.4f}"],
+            "Lower bound": [c1_lo, c2_lo],
+            "Upper bound": [c1_hi, c2_hi],
         }
-        st.table(tabla_sens)
+        st.table(sensitivity_table)
 
-# Cerrar contenedor principal
+# Close main container
 st.markdown("</div>", unsafe_allow_html=True)
