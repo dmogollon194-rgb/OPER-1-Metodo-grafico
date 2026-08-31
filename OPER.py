@@ -2,7 +2,7 @@ import streamlit as st
 import pyomo.environ as pyo
 import numpy as np
 import plotly.graph_objects as go
- 
+
 # =================== WATERMARK ===================
 watermark = """
 <style>
@@ -87,20 +87,6 @@ def get_domain(tipo):
         return pyo.NonNegativeIntegers
     elif tipo == "Binary":
         return pyo.Binary
-
-
-def get_highs_solver(time_limit=15.0):
-    """Create a HiGHS solver with a finite time limit to keep the UI responsive."""
-    solver = pyo.SolverFactory("appsi_highs")
-    try:
-        solver.options["time_limit"] = float(time_limit)
-    except Exception:
-        # Compatibility fallback for APPsi versions exposing config directly.
-        try:
-            solver.config.time_limit = float(time_limit)
-        except Exception:
-            pass
-    return solver
 
 # =================== HELPER: EQUATION objective functionRMATTING ===================
 def fmt_num(v):
@@ -243,258 +229,8 @@ def coefficient_ranges(vertices, x_opt, y_opt, c1, c2, problem_type):
 
     return {"c1": (c1_min, c1_max), "c2": (c2_min, c2_max)}
 
-# =================== RHS SENSITIVITY RANGES ===================
-def _canonical_rhs_rows(constraints):
-    """Convert constraints to a canonical representation for 2D LP sensitivity."""
-    rows = []
-
-    for i, (a, b, operator, rhs) in enumerate(constraints):
-        if operator == "<=":
-            rows.append({
-                "n": np.array([float(a), float(b)]),
-                "r": float(rhs),
-                "kind": "ineq",
-                "source": i,
-                "rhs_factor": 1.0,
-            })
-        elif operator == ">=":
-            # a*x+b*y >= rhs  <=>  -a*x-b*y <= -rhs
-            rows.append({
-                "n": np.array([-float(a), -float(b)]),
-                "r": -float(rhs),
-                "kind": "ineq",
-                "source": i,
-                "rhs_factor": -1.0,
-            })
-        else:
-            rows.append({
-                "n": np.array([float(a), float(b)]),
-                "r": float(rhs),
-                "kind": "eq",
-                "source": i,
-                "rhs_factor": 1.0,
-            })
-
-    # Non-negativity bounds x >= 0 and y >= 0
-    rows.append({
-        "n": np.array([-1.0, 0.0]),
-        "r": 0.0,
-        "kind": "ineq",
-        "source": None,
-        "rhs_factor": 0.0,
-        "name": "x >= 0",
-    })
-    rows.append({
-        "n": np.array([0.0, -1.0]),
-        "r": 0.0,
-        "kind": "ineq",
-        "source": None,
-        "rhs_factor": 0.0,
-        "name": "y >= 0",
-    })
-
-    return rows
-
-
-def _dual_feasible_bases(rows, x_opt, y_opt, c1, c2, problem_type, tol=1e-8):
-    """Find all 2-row optimal bases compatible with the current optimum."""
-    point = np.array([float(x_opt), float(y_opt)])
-    active = []
-
-    for idx, row in enumerate(rows):
-        activity = float(np.dot(row["n"], point))
-        if row["kind"] == "eq" or abs(activity - row["r"]) <= 1e-7:
-            active.append(idx)
-
-    target = np.array([float(c1), float(c2)])
-    if problem_type == "Minimize":
-        target = -target
-
-    candidates = []
-
-    for p in range(len(active)):
-        for q in range(p + 1, len(active)):
-            i = active[p]
-            j = active[q]
-            B = np.vstack([rows[i]["n"], rows[j]["n"]])
-            det = float(np.linalg.det(B))
-
-            if abs(det) <= tol:
-                continue
-
-            try:
-                multipliers = np.linalg.solve(B.T, target)
-            except np.linalg.LinAlgError:
-                continue
-
-            ok = True
-            for lam, row_idx in zip(multipliers, (i, j)):
-                if rows[row_idx]["kind"] == "ineq" and lam < -1e-7:
-                    ok = False
-                    break
-
-            if ok:
-                candidates.append((i, j, abs(det)))
-
-    # Special case: zero objective. Any nonsingular active pair is valid.
-    if not candidates and np.linalg.norm(target) <= tol:
-        for p in range(len(active)):
-            for q in range(p + 1, len(active)):
-                i = active[p]
-                j = active[q]
-                B = np.vstack([rows[i]["n"], rows[j]["n"]])
-                det = float(np.linalg.det(B))
-                if abs(det) > tol:
-                    candidates.append((i, j, abs(det)))
-
-    return candidates
-
-
-def _rhs_delta_interval_for_basis(rows, constraints, basis, target_i, x_opt, y_opt, tol=1e-9):
-    """Allowable RHS delta interval for one constraint under one optimal basis."""
-    point = np.array([float(x_opt), float(y_opt)])
-    b0, b1, _ = basis
-    basis_rows = (b0, b1)
-    B = np.vstack([rows[b0]["n"], rows[b1]["n"]])
-
-    target_basis_pos = None
-    for pos, row_idx in enumerate(basis_rows):
-        if rows[row_idx]["source"] == target_i:
-            target_basis_pos = pos
-            break
-
-    a, b, operator, rhs = constraints[target_i]
-
-    # If the target row is nonbasic, the optimum does not move until
-    # the row reaches the current solution.
-    if target_basis_pos is None:
-        lhs = float(a * x_opt + b * y_opt)
-        if operator == "<=":
-            return lhs - float(rhs), np.inf
-        if operator == ">=":
-            return -np.inf, lhs - float(rhs)
-        return lhs - float(rhs), lhs - float(rhs)
-
-    factor = rows[basis_rows[target_basis_pos]]["rhs_factor"]
-    e = np.zeros(2)
-    e[target_basis_pos] = factor
-
-    try:
-        direction = np.linalg.solve(B, e)
-    except np.linalg.LinAlgError:
-        return None
-
-    delta_lo = -np.inf
-    delta_hi = np.inf
-
-    for row_idx, row in enumerate(rows):
-        # The changing basic row is satisfied identically by construction.
-        if row["source"] == target_i:
-            continue
-
-        q = float(np.dot(row["n"], direction))
-        activity = float(np.dot(row["n"], point))
-
-        if row["kind"] == "ineq":
-            slack = float(row["r"] - activity)
-            if slack < 0 and abs(slack) <= 1e-7:
-                slack = 0.0
-
-            if q > tol:
-                delta_hi = min(delta_hi, slack / q)
-            elif q < -tol:
-                delta_lo = max(delta_lo, slack / q)
-            elif slack < -1e-7:
-                return None
-        else:
-            # An unchanged equality must continue to hold.
-            if abs(q) > tol:
-                delta_lo = max(delta_lo, 0.0)
-                delta_hi = min(delta_hi, 0.0)
-
-    if abs(delta_lo) < 1e-10:
-        delta_lo = 0.0
-    if abs(delta_hi) < 1e-10:
-        delta_hi = 0.0
-
-    if delta_lo > delta_hi + 1e-8:
-        return None
-
-    return delta_lo, delta_hi
-
-
-def rhs_sensitivity_ranges(constraints, x_opt, y_opt, c1, c2, problem_type):
-    """
-    Compute one-at-a-time RHS ranges for a 2-variable continuous LP.
-
-    The interval reported is the range of each RHS for which an optimal
-    basis compatible with the current solution remains primal and dual feasible.
-    """
-    rows = _canonical_rhs_rows(constraints)
-    bases = _dual_feasible_bases(rows, x_opt, y_opt, c1, c2, problem_type)
-
-    if not bases:
-        return None
-
-    results = []
-
-    for i, (a, b, operator, rhs) in enumerate(constraints):
-        candidate_intervals = []
-
-        # Prefer bases containing the target constraint, because this gives
-        # the usual textbook RHS sensitivity range for a binding row.
-        containing = [
-            basis for basis in bases
-            if rows[basis[0]]["source"] == i or rows[basis[1]]["source"] == i
-        ]
-        bases_to_test = containing if containing else bases
-
-        for basis in bases_to_test:
-            interval = _rhs_delta_interval_for_basis(
-                rows, constraints, basis, i, x_opt, y_opt
-            )
-            if interval is None:
-                continue
-
-            lo, hi = interval
-            if lo <= 1e-8 and hi >= -1e-8:
-                # Score wider intervals higher; infinite sides dominate.
-                left = np.inf if np.isneginf(lo) else max(0.0, -lo)
-                right = np.inf if np.isposinf(hi) else max(0.0, hi)
-                score = (
-                    int(np.isinf(left)) + int(np.isinf(right)),
-                    (0.0 if np.isinf(left) else left) + (0.0 if np.isinf(right) else right),
-                    basis[2],
-                )
-                candidate_intervals.append((score, lo, hi))
-
-        if not candidate_intervals:
-            results.append(None)
-            continue
-
-        candidate_intervals.sort(key=lambda t: t[0], reverse=True)
-        _, delta_lo, delta_hi = candidate_intervals[0]
-
-        rhs_value = float(rhs)
-        rhs_min = -np.inf if np.isneginf(delta_lo) else rhs_value + delta_lo
-        rhs_max = np.inf if np.isposinf(delta_hi) else rhs_value + delta_hi
-        allowable_decrease = np.inf if np.isneginf(delta_lo) else max(0.0, -delta_lo)
-        allowable_increase = np.inf if np.isposinf(delta_hi) else max(0.0, delta_hi)
-
-        results.append({
-            "rhs_current": rhs_value,
-            "rhs_min": rhs_min,
-            "rhs_max": rhs_max,
-            "allowable_decrease": allowable_decrease,
-            "allowable_increase": allowable_increase,
-        })
-
-    return results
-
 # =================== BUILD AND SOLVE MODEL ===================
-def build_and_solve_model(
-    c1, c2, constraints, problem_type, x_type, y_type, solver_time_limit=15.0
-):
+def build_and_solve_model(c1, c2, constraints, problem_type, x_type, y_type):
     m = pyo.ConcreteModel()
 
     continuous_dual = (x_type == "Nonnegative Real" and y_type == "Nonnegative Real")
@@ -518,350 +254,10 @@ def build_and_solve_model(
         else:
             m.cons.add(a * m.x + b * m.y == rhs)
 
-    solver = get_highs_solver(solver_time_limit)
+    solver = pyo.SolverFactory("appsi_highs")
     result = solver.solve(m, load_solutions=True)
 
     return m, result
-
-# =================== DISCRETE / MIXED-INTEGER SENSITIVITY ===================
-def _is_optimal_termination(result):
-    """Return True when HiGHS reports an optimal solution."""
-    try:
-        term = str(result.solver.termination_condition).lower()
-    except Exception:
-        return False
-    term = term.strip()
-    return term == "optimal" or term.endswith(".optimal")
-
-
-def _discrete_point_feasible(x, y, constraints, x_type, y_type, tol=1e-6):
-    """Check feasibility of the incumbent, including integrality/binary domains."""
-    if x_type == "Nonnegative Real":
-        if x < -tol:
-            return False
-    elif x_type == "Nonnegative Integer":
-        if x < -tol or abs(x - round(x)) > tol:
-            return False
-    elif x_type == "Binary":
-        if min(abs(x), abs(x - 1.0)) > tol:
-            return False
-
-    if y_type == "Nonnegative Real":
-        if y < -tol:
-            return False
-    elif y_type == "Nonnegative Integer":
-        if y < -tol or abs(y - round(y)) > tol:
-            return False
-    elif y_type == "Binary":
-        if min(abs(y), abs(y - 1.0)) > tol:
-            return False
-
-    for a, b, operator, rhs in constraints:
-        lhs = a * x + b * y
-        if operator == "<=" and lhs > rhs + tol:
-            return False
-        if operator == ">=" and lhs < rhs - tol:
-            return False
-        if operator == "=" and abs(lhs - rhs) > tol:
-            return False
-
-    return True
-
-
-def _incumbent_still_optimal(
-    c1, c2, constraints, problem_type, x_type, y_type,
-    x_opt, y_opt, objective_tol=1e-6
-):
-    """
-    Reoptimize the modified MIP and test whether the original (x*, y*)
-    is still optimal. Alternative optimal solutions are allowed.
-    """
-    if not _discrete_point_feasible(
-        x_opt, y_opt, constraints, x_type, y_type
-    ):
-        return False
-
-    incumbent_value = c1 * x_opt + c2 * y_opt
-
-    try:
-        model_test, result_test = build_and_solve_model(
-            c1, c2, constraints, problem_type, x_type, y_type,
-            solver_time_limit=4.0
-        )
-    except Exception:
-        return False
-
-    if not _is_optimal_termination(result_test):
-        return False
-
-    try:
-        optimal_value = float(pyo.value(model_test.obj))
-    except Exception:
-        return False
-
-    scale = max(1.0, abs(float(incumbent_value)), abs(optimal_value))
-    return abs(optimal_value - float(incumbent_value)) <= objective_tol * scale
-
-
-def _search_discrete_boundary(
-    current_value, direction, max_change, first_step, predicate,
-    bisection_iterations=4
-):
-    """
-    Search one side of the optimality interval for a scalar parameter.
-
-    Returns
-    -------
-    boundary : float
-        Furthest tested/estimated value for which the incumbent remains optimal.
-    limited : bool
-        True if no change was detected before the configured search limit.
-        In that case the true interval can be wider.
-    """
-    current_value = float(current_value)
-    max_change = max(float(max_change), 0.0)
-    first_step = max(float(first_step), 1e-9)
-
-    if max_change <= 0:
-        return current_value, True
-
-    # Verify the reference point. If numerical issues appear, do not fabricate a range.
-    if not predicate(current_value):
-        return current_value, False
-
-    distance = min(first_step, max_change)
-    last_good = current_value
-
-    while True:
-        test_value = current_value + direction * distance
-        if predicate(test_value):
-            last_good = test_value
-            if distance >= max_change - 1e-12:
-                return last_good, True
-            distance = min(max_change, distance * 2.0)
-            continue
-
-        # We have a bracket: last_good is optimal, test_value is not.
-        good = last_good
-        bad = test_value
-
-        for _ in range(int(bisection_iterations)):
-            mid = 0.5 * (good + bad)
-            if predicate(mid):
-                good = mid
-            else:
-                bad = mid
-
-        return good, False
-
-
-def _solve_rhs_breakpoint(
-    constraints, target_index, x_opt, y_opt, c1, c2, problem_type,
-    x_type, y_type, objective_epsilon=None
-):
-    """
-    Find the RHS breakpoint using ONE auxiliary MIP solve.
-
-    The target constraint is temporarily removed. We then require a solution
-    that improves the incumbent objective by a small epsilon and optimize the
-    target row activity. This finds the first RHS value at which a strictly
-    better discrete solution can enter when the row is relaxed.
-
-    Returns None when no improving solution exists without the target row,
-    meaning the relaxation side is unbounded from the sensitivity viewpoint.
-    """
-    m = pyo.ConcreteModel()
-    m.x = pyo.Var(domain=get_domain(x_type))
-    m.y = pyo.Var(domain=get_domain(y_type))
-
-    m.cons = pyo.ConstraintList()
-    for j, (a_j, b_j, op_j, rhs_j) in enumerate(constraints):
-        if j == target_index:
-            continue
-        expr = a_j * m.x + b_j * m.y
-        if op_j == "<=":
-            m.cons.add(expr <= rhs_j)
-        elif op_j == ">=":
-            m.cons.add(expr >= rhs_j)
-        else:
-            m.cons.add(expr == rhs_j)
-
-    z_inc = float(c1 * x_opt + c2 * y_opt)
-    if objective_epsilon is None:
-        objective_epsilon = 1e-7 * max(1.0, abs(z_inc))
-    eps = max(float(objective_epsilon), 1e-9)
-
-    obj_expr = c1 * m.x + c2 * m.y
-    if problem_type == "Maximize":
-        m.better = pyo.Constraint(expr=obj_expr >= z_inc + eps)
-    else:
-        m.better = pyo.Constraint(expr=obj_expr <= z_inc - eps)
-
-    a, b, operator, _ = constraints[target_index]
-    row_activity = a * m.x + b * m.y
-
-    if operator == "<=":
-        # First improving solution admitted while RHS increases.
-        m.aux_obj = pyo.Objective(expr=row_activity, sense=pyo.minimize)
-    elif operator == ">=":
-        # First improving solution admitted while RHS decreases.
-        m.aux_obj = pyo.Objective(expr=row_activity, sense=pyo.maximize)
-    else:
-        return None
-
-    solver = get_highs_solver(4.0)
-    try:
-        result = solver.solve(m, load_solutions=True)
-    except Exception:
-        return None
-
-    try:
-        term = str(result.solver.termination_condition).lower()
-    except Exception:
-        return None
-
-    if "infeasible" in term:
-        return None
-    if not (term == "optimal" or term.endswith(".optimal")):
-        return None
-
-    try:
-        return float(pyo.value(row_activity))
-    except Exception:
-        return None
-
-
-def discrete_rhs_sensitivity_ranges(
-    constraints, x_opt, y_opt, c1, c2, problem_type,
-    x_type, y_type, search_step=1.0, max_change=50.0
-):
-    """
-    Fast one-at-a-time RHS sensitivity for integer/binary/mixed models.
-
-    Unlike LP sensitivity, this is a discrete breakpoint analysis. For each
-    inequality we use one auxiliary reoptimization to find the first RHS value
-    at which a strictly better solution can become feasible.
-
-    The search_step/max_change arguments are retained for compatibility with
-    the UI, but RHS breakpoints no longer require repeated searches.
-    """
-    results = []
-
-    for i, (a, b, operator, rhs) in enumerate(constraints):
-        rhs = float(rhs)
-        lhs_inc = float(a * x_opt + b * y_opt)
-
-        if operator == "<=":
-            # Tightening is possible only until the incumbent becomes infeasible.
-            rhs_min = lhs_inc
-            lower_limited = False
-
-            breakpoint = _solve_rhs_breakpoint(
-                constraints, i, x_opt, y_opt, c1, c2, problem_type,
-                x_type, y_type
-            )
-            if breakpoint is None:
-                rhs_max = np.inf
-                upper_limited = False
-            else:
-                rhs_max = max(rhs, float(breakpoint))
-                upper_limited = False
-
-        elif operator == ">=":
-            # Tightening upward is possible only until incumbent infeasibility.
-            rhs_max = lhs_inc
-            upper_limited = False
-
-            breakpoint = _solve_rhs_breakpoint(
-                constraints, i, x_opt, y_opt, c1, c2, problem_type,
-                x_type, y_type
-            )
-            if breakpoint is None:
-                rhs_min = -np.inf
-                lower_limited = False
-            else:
-                rhs_min = min(rhs, float(breakpoint))
-                lower_limited = False
-
-        else:
-            # Keeping the SAME incumbent feasible in an equality fixes the RHS.
-            rhs_min = rhs
-            rhs_max = rhs
-            lower_limited = False
-            upper_limited = False
-
-        allowable_decrease = (
-            np.inf if np.isneginf(rhs_min) else max(0.0, rhs - float(rhs_min))
-        )
-        allowable_increase = (
-            np.inf if np.isposinf(rhs_max) else max(0.0, float(rhs_max) - rhs)
-        )
-
-        results.append({
-            "rhs_current": rhs,
-            "rhs_min": rhs_min,
-            "rhs_max": rhs_max,
-            "allowable_decrease": allowable_decrease,
-            "allowable_increase": allowable_increase,
-            "lower_search_limited": bool(lower_limited),
-            "upper_search_limited": bool(upper_limited),
-            "method": "Discrete breakpoint reoptimization",
-        })
-
-    return results
-
-def discrete_coefficient_sensitivity_ranges(
-    constraints, x_opt, y_opt, c1, c2, problem_type,
-    x_type, y_type, search_step=1.0, max_change=50.0
-):
-    """
-    Sensitivity of c1 and c2 for integer/binary/mixed models.
-
-    The feasible set stays fixed. Each coefficient is changed one at a time and
-    the MIP is reoptimized to determine the interval in which the current
-    incumbent remains optimal (possibly tied with another optimum).
-    """
-    output = {}
-
-    for name, current in (("c1", float(c1)), ("c2", float(c2))):
-        cache = {}
-
-        def predicate(new_value):
-            key = round(float(new_value), 10)
-            if key in cache:
-                return cache[key]
-
-            if name == "c1":
-                c1_test, c2_test = float(new_value), float(c2)
-            else:
-                c1_test, c2_test = float(c1), float(new_value)
-
-            ok = _incumbent_still_optimal(
-                c1_test, c2_test, constraints, problem_type,
-                x_type, y_type, x_opt, y_opt
-            )
-            cache[key] = ok
-            return ok
-
-        lower, lower_limited = _search_discrete_boundary(
-            current, -1.0, max_change, search_step, predicate
-        )
-        upper, upper_limited = _search_discrete_boundary(
-            current, +1.0, max_change, search_step, predicate
-        )
-
-        output[name] = {
-            "lower": float(lower),
-            "upper": float(upper),
-            "allowable_decrease": max(0.0, current - float(lower)),
-            "allowable_increase": max(0.0, float(upper) - current),
-            "lower_search_limited": bool(lower_limited),
-            "upper_search_limited": bool(upper_limited),
-            "method": "Discrete reoptimization",
-        }
-
-    return output
-
 
 # =================== CALLBACKS TO KEEP EXPANDER OPEN ===================
 def keep_expander_open(k):
@@ -916,37 +312,6 @@ with col2:
         "Domain of Y",
         ["Nonnegative Real", "Nonnegative Integer", "Binary"],
         key="y_type_widget"
-    )
-
-# Settings used only for integer/binary/mixed-integer sensitivity.
-# They define how far the reoptimization search explores before reporting
-# that no change was detected within the configured window.
-discrete_model_ui = not (
-    x_type == "Nonnegative Real" and y_type == "Nonnegative Real"
-)
-discrete_search_step = 1.0
-discrete_max_change = 50.0
-
-if discrete_model_ui:
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Discrete sensitivity")
-    discrete_search_step = st.sidebar.number_input(
-        "Initial parameter step",
-        min_value=0.0001,
-        value=1.0,
-        step=0.5,
-        format="%.4f",
-        key="discrete_sensitivity_step_widget",
-        help="Initial perturbation used to locate a change in the optimal integer solution."
-    )
-    discrete_max_change = st.sidebar.number_input(
-        "Maximum change to explore",
-        min_value=0.001,
-        value=50.0,
-        step=5.0,
-        format="%.4f",
-        key="discrete_sensitivity_max_change_widget",
-        help="If the current optimum is still optimal at this distance, the table reports a one-sided bound (≥ or ≤)."
     )
 
 # Objective function
@@ -1057,16 +422,8 @@ if st.button("Solve and plot"):
         vertices = enumerate_vertices(constraints, x_type, y_type)
 
         if continuous_dual:
-            sensitivity_mode = "continuous"
             ranges = coefficient_ranges(vertices, x_opt, y_opt, c1, c2, problem_type)
-            rhs_ranges = rhs_sensitivity_ranges(
-                constraints, x_opt, y_opt, c1, c2, problem_type
-            )
         else:
-            # MIP sensitivity can require many reoptimizations. Do not block the
-            # main Solve action; calculate it only when the user explicitly asks.
-            sensitivity_mode = "discrete"
-            rhs_ranges = None
             ranges = None
 
         st.session_state["model_solved"] = True
@@ -1080,10 +437,6 @@ if st.button("Solve and plot"):
         st.session_state["duals"] = duals
         st.session_state["vertices"] = vertices
         st.session_state["coefficient_ranges_result"] = ranges
-        st.session_state["rhs_ranges_result"] = rhs_ranges
-        st.session_state["sensitivity_mode"] = sensitivity_mode
-        st.session_state["discrete_search_step"] = discrete_search_step
-        st.session_state["discrete_max_change"] = discrete_max_change
         st.session_state["problem_type_value"] = problem_type
         st.session_state["x_type_value"] = x_type
         st.session_state["y_type_value"] = y_type
@@ -1204,188 +557,36 @@ if st.session_state.get("model_solved", False):
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # -------- Shadow prices / discrete note --------
+    # -------- Shadow prices --------
     st.markdown("<hr>", unsafe_allow_html=True)
+    st.subheader("Shadow Prices")
 
-    x_type_value = st.session_state["x_type_value"]
-    y_type_value = st.session_state["y_type_value"]
-    continuous_result = (
-        x_type_value == "Nonnegative Real" and
-        y_type_value == "Nonnegative Real"
-    )
     duals = st.session_state.get("duals", [])
 
-    if continuous_result:
-        st.subheader("Shadow Prices")
-        if isinstance(duals, list) and len(duals) > 0:
-            dual_table = {
-                "Constraint": [row[0] for row in duals],
-                "Shadow price (Dual)": [row[1] for row in duals],
-            }
-            st.table(dual_table)
-        else:
-            st.info("No shadow prices are available.")
-    else:
-        st.subheader("Discrete Sensitivity Method")
-        st.info(
-            "For integer, binary, or mixed-integer models, classical LP shadow prices "
-            "and basis ranges are not valid. RHS limits below are obtained from discrete "
-            "breakpoints, while objective-coefficient limits use one-at-a-time reoptimization. "
-            "The analysis tracks the range in which the current (x*, y*) remains optimal."
-        )
-
-        if st.session_state.get("rhs_ranges_result") is None or st.session_state.get("coefficient_ranges_result") is None:
-            st.warning(
-                "The optimization model has already been solved. Discrete sensitivity is "
-                "calculated separately because it requires multiple additional MIP solves."
-            )
-
-        if st.button("Calculate discrete sensitivity", key="calculate_discrete_sensitivity_button"):
-            with st.spinner("Calculating discrete sensitivity..."):
-                try:
-                    rhs_ranges_calc = discrete_rhs_sensitivity_ranges(
-                        constraints, x_opt, y_opt, c1_result, c2_result,
-                        st.session_state["problem_type_value"],
-                        x_type_value, y_type_value,
-                        search_step=st.session_state.get("discrete_search_step", 1.0),
-                        max_change=st.session_state.get("discrete_max_change", 50.0)
-                    )
-                    coeff_ranges_calc = discrete_coefficient_sensitivity_ranges(
-                        constraints, x_opt, y_opt, c1_result, c2_result,
-                        st.session_state["problem_type_value"],
-                        x_type_value, y_type_value,
-                        search_step=st.session_state.get("discrete_search_step", 1.0),
-                        max_change=st.session_state.get("discrete_max_change", 50.0)
-                    )
-                    st.session_state["rhs_ranges_result"] = rhs_ranges_calc
-                    st.session_state["coefficient_ranges_result"] = coeff_ranges_calc
-                    st.success("Discrete sensitivity calculated.")
-                except Exception as e:
-                    st.error(f"Discrete sensitivity could not be completed: {e}")
-
-    # -------- RHS ranges --------
-    st.markdown("<hr>", unsafe_allow_html=True)
-    st.subheader("Constraint RHS Sensitivity")
-
-    rhs_ranges = st.session_state.get("rhs_ranges_result", None)
-    sensitivity_mode = st.session_state.get("sensitivity_mode", "continuous")
-
-    def format_sensitivity_value(v):
-        if v is None:
-            return "N/A"
-        if np.isneginf(v):
-            return "-∞"
-        if np.isposinf(v):
-            return "+∞"
-        return f"{v:.4f}"
-
-    def format_discrete_bound(v, limited, side):
-        if v is None:
-            return "N/A"
-        txt = format_sensitivity_value(v)
-        if not limited:
-            return txt
-        # Search-limited result: the true interval extends at least this far.
-        return ("≤ " if side == "lower" else "≥ ") + txt
-
-    def format_discrete_allowable(v, limited):
-        if v is None:
-            return "N/A"
-        txt = format_sensitivity_value(v)
-        return ("≥ " + txt) if limited else txt
-
-    if rhs_ranges is None:
-        if sensitivity_mode == "discrete":
-            st.info("Click 'Calculate discrete sensitivity' above to generate the RHS ranges.")
-        else:
-            st.info("The RHS sensitivity ranges could not be calculated for this solution.")
-    else:
-        rhs_table = {
-            "Constraint": [],
-            "Current RHS": [],
-            "Minimum RHS": [],
-            "Maximum RHS": [],
-            "Allowable decrease": [],
-            "Allowable increase": [],
+    if isinstance(duals, list) and len(duals) > 0:
+        dual_table = {
+            "Constraint": [row[0] for row in duals],
+            "Shadow price (Dual)": [row[1] for row in duals],
         }
-
-        if sensitivity_mode == "continuous":
-            rhs_table["Shadow price"] = []
-
-        for i, (a_i, b_i, operator_i, rhs_i) in enumerate(constraints):
-            equation_i = equation_text(a_i, b_i, operator_i, rhs_i)
-            rr = rhs_ranges[i] if i < len(rhs_ranges) else None
-
-            rhs_table["Constraint"].append(equation_i)
-            rhs_table["Current RHS"].append(f"{rhs_i:.4f}")
-
-            if rr is None:
-                rhs_table["Minimum RHS"].append("N/A")
-                rhs_table["Maximum RHS"].append("N/A")
-                rhs_table["Allowable decrease"].append("N/A")
-                rhs_table["Allowable increase"].append("N/A")
-            elif sensitivity_mode == "continuous":
-                rhs_table["Minimum RHS"].append(format_sensitivity_value(rr["rhs_min"]))
-                rhs_table["Maximum RHS"].append(format_sensitivity_value(rr["rhs_max"]))
-                rhs_table["Allowable decrease"].append(
-                    format_sensitivity_value(rr["allowable_decrease"])
-                )
-                rhs_table["Allowable increase"].append(
-                    format_sensitivity_value(rr["allowable_increase"])
-                )
-            else:
-                lower_limited = rr.get("lower_search_limited", False)
-                upper_limited = rr.get("upper_search_limited", False)
-                rhs_table["Minimum RHS"].append(
-                    format_discrete_bound(rr["rhs_min"], lower_limited, "lower")
-                )
-                rhs_table["Maximum RHS"].append(
-                    format_discrete_bound(rr["rhs_max"], upper_limited, "upper")
-                )
-                rhs_table["Allowable decrease"].append(
-                    format_discrete_allowable(rr["allowable_decrease"], lower_limited)
-                )
-                rhs_table["Allowable increase"].append(
-                    format_discrete_allowable(rr["allowable_increase"], upper_limited)
-                )
-
-            if sensitivity_mode == "continuous":
-                dual_value = duals[i][1] if i < len(duals) else "N/A"
-                if isinstance(dual_value, (int, float, np.integer, np.floating)):
-                    dual_value = f"{float(dual_value):.4f}"
-                rhs_table["Shadow price"].append(dual_value)
-
-        st.table(rhs_table)
-
-        if sensitivity_mode == "continuous":
-            st.caption(
-                "Minimum/maximum RHS values are one-at-a-time LP sensitivity limits: "
-                "inside this interval, an optimal basis compatible with the current solution remains valid."
-            )
-        else:
-            step_used = st.session_state.get("discrete_search_step", 1.0)
-            max_change_used = st.session_state.get("discrete_max_change", 50.0)
-            st.caption(
-                "Discrete/MIP RHS sensitivity uses a breakpoint reoptimization. "
-                "For each inequality, the table reports the tightening limit imposed by feasibility of the current "
-                "integer solution and the relaxation breakpoint at which a strictly better solution can enter. "
-                "An infinite limit means no improving solution was found after removing that constraint. "
-                "At a finite breakpoint the optimal integer solution may change, so interpret it as a change point."
-            )
+        st.table(dual_table)
+    else:
+        st.info("No shadow prices are available.")
 
     # -------- Coefficient ranges --------
     st.markdown("<hr>", unsafe_allow_html=True)
     st.subheader("Objective Function Coefficients")
 
+    x_type_value = st.session_state["x_type_value"]
+    y_type_value = st.session_state["y_type_value"]
     ranges = st.session_state.get("coefficient_ranges_result", None)
-    sensitivity_mode = st.session_state.get("sensitivity_mode", "continuous")
 
-    if ranges is None:
-        if sensitivity_mode == "discrete":
-            st.info("Click 'Calculate discrete sensitivity' above to generate the coefficient ranges.")
-        else:
-            st.info("The objective coefficient sensitivity ranges could not be calculated.")
-    elif sensitivity_mode == "continuous":
+    if not (x_type_value == "Nonnegative Real" and y_type_value == "Nonnegative Real"):
+        st.info(
+            "Analysis not available for integer or binary models."
+        )
+    elif ranges is None:
+        st.info("The coefficient ranges could not be calculated.")
+    else:
         def format_interval(lo, hi):
             def fmt(v):
                 if np.isneginf(v):
@@ -1405,55 +606,6 @@ if st.session_state.get("model_solved", False):
             "Upper bound": [c1_hi, c2_hi],
         }
         st.table(sensitivity_table)
-        st.caption(
-            "Continuous LP coefficient ranges preserve an optimal basis compatible with the current solution."
-        )
-    else:
-        coeff_table = {
-            "Coefficient": [],
-            "Current value": [],
-            "Lower bound": [],
-            "Upper bound": [],
-            "Allowable decrease": [],
-            "Allowable increase": [],
-        }
-
-        for name, label, current in (
-            ("c1", "c1 (coefficient of x)", float(c1_result)),
-            ("c2", "c2 (coefficient of y)", float(c2_result)),
-        ):
-            rr = ranges.get(name)
-            coeff_table["Coefficient"].append(label)
-            coeff_table["Current value"].append(f"{current:.4f}")
-
-            if rr is None:
-                coeff_table["Lower bound"].append("N/A")
-                coeff_table["Upper bound"].append("N/A")
-                coeff_table["Allowable decrease"].append("N/A")
-                coeff_table["Allowable increase"].append("N/A")
-                continue
-
-            lower_limited = rr.get("lower_search_limited", False)
-            upper_limited = rr.get("upper_search_limited", False)
-            coeff_table["Lower bound"].append(
-                format_discrete_bound(rr["lower"], lower_limited, "lower")
-            )
-            coeff_table["Upper bound"].append(
-                format_discrete_bound(rr["upper"], upper_limited, "upper")
-            )
-            coeff_table["Allowable decrease"].append(
-                format_discrete_allowable(rr["allowable_decrease"], lower_limited)
-            )
-            coeff_table["Allowable increase"].append(
-                format_discrete_allowable(rr["allowable_increase"], upper_limited)
-            )
-
-        st.table(coeff_table)
-        st.caption(
-            "Discrete/MIP coefficient sensitivity is obtained by reoptimization, one coefficient at a time. "
-            "The interval preserves the current integer/binary solution as optimal; tied alternative optima are allowed. "
-            "Bounds marked with ≤ or ≥ reached the configured search limit and may extend farther."
-        )
 
 # Close main container
 st.markdown("</div>", unsafe_allow_html=True)
